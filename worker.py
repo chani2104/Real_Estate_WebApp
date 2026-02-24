@@ -5,7 +5,7 @@ UI 프리징 방지를 위해 별도 스레드에서 실행
 
 from PySide6.QtCore import QThread, Signal
 
-from Real_Estate_WebApp.crawling.scraper import scrape_all_articles
+from Real_Estate_WebApp.scraper import scrape_all_articles
 
 
 class ScraperWorker(QThread):
