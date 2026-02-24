@@ -98,31 +98,23 @@ def default_filename(region_name: str = "") -> str:
     return f"매물목록_{region}_{date_str}.xlsx"
 
 
-# 지역 설정: cortarNo -> (lat, lon, display_name)
-# region_config.json 파일이 있으면 병합 (같은 디렉터리)
-_DEFAULT_REGIONS: Dict[str, tuple] = {
-    "5119000000": (37.164232, 128.985713, "강원도 태백시"),
-    "1168010100": (37.5172, 127.0473, "서울 강남구 역삼동"),
-    "1168010800": (37.5045, 127.0489, "서울 강남구 삼성동"),
-    "1111010100": (37.5704, 126.9853, "서울 종로구 청운동"),
-    "2611010100": (35.1028, 129.0403, "부산 해운대구 우동"),
-}
-
-
 def _load_region_config() -> Dict[str, tuple]:
-    """기본 설정 + region_config.json 병합"""
+    """region_config.json 파일에서 지역 설정 로드"""
     import json
-    config = dict(_DEFAULT_REGIONS)
+
     config_path = os.path.join(os.path.dirname(__file__), "region_config.json")
+    config = {}
+
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                extra = json.load(f)
-            for cortar_no, v in extra.items():
+                data = json.load(f)
+            for cortar_no, v in data.items():
                 if isinstance(v, (list, tuple)) and len(v) >= 3:
                     config[cortar_no] = (float(v[0]), float(v[1]), str(v[2]))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"설정 파일 로드 오류: {e}")
+    
     return config
 
 
