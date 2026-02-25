@@ -6,9 +6,12 @@ import requests
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import folium
+from streamlit_folium import st_folium
 
 import scraper
-from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong
+from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong, haversine_distance, estimate_walking_minutes
+from subway_data import SUBWAY_LINES
 
 # ----------------------------
 # 0) 스타일: 노랑빛 UI
@@ -40,7 +43,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🏠 네이버 부동산 매물 검색 (필터 + 상세보기)")
+st.title("🏠 네이버 부동산 매물 검색")
 st.caption("지역을 검색하고, 거래유형/매물유형/면적(평)/예산으로 필터링한 뒤 목록에서 클릭해 상세를 볼 수 있어요.")
 
 
@@ -157,8 +160,17 @@ with st.sidebar:
 
     st.caption("예산을 0으로 두면 예산 필터를 적용하지 않습니다.")
 
+    # 🚉 지하철 필터 추가
     st.divider()
-    run = st.button("검색 실행", type="primary", use_container_width=True)
+    st.subheader("🚉 지하철 필터")
+    subway_line = st.selectbox("지하철 노선 선택", options=["선택 안 함"] + list(SUBWAY_LINES.keys()), key="subway_line")
+    
+    walking_time_limit = 30
+    if subway_line != "선택 안 함":
+        walking_time_limit = st.slider("최대 도보 시간 (분)", 5, 30, 10, 5, key="walking_time_limit_val")
+
+    st.divider()
+    run = st.button("검색 실행", type="primary", width="stretch")
 
 
 # ----------------------------
@@ -199,6 +211,26 @@ if run:
         df["가격(만원)"] = df["가격"].apply(parse_price_to_manwon)
         df["면적(㎡)"] = pd.to_numeric(df["면적(㎡)"], errors="coerce")
         df["면적(평)"] = df["면적(㎡)"].apply(sqm_to_pyeong)
+        df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+        df["lng"] = pd.to_numeric(df["lng"], errors="coerce")
+
+        # 🚉 지하철 거리 필터 로직
+        if subway_line != "선택 안 함":
+            stations = SUBWAY_LINES[subway_line]
+            
+            def get_min_walking_time(row):
+                if pd.isna(row["lat"]) or pd.isna(row["lng"]):
+                    return 999
+                min_time = 999
+                for s_name, (s_lat, s_lon) in stations.items():
+                    dist = haversine_distance(row["lat"], row["lng"], s_lat, s_lon)
+                    w_time = estimate_walking_minutes(dist)
+                    if w_time < min_time:
+                        min_time = w_time
+                return min_time
+
+            df["도보시간(분)"] = df.apply(get_min_walking_time, axis=1)
+            df = df[df["도보시간(분)"] <= walking_time_limit]
 
         # ✅ 가격구간(요구사항: 5,000만 미만 / 5,000만~5억 / 5억 초과)
         def price_bucket(x):
@@ -273,6 +305,116 @@ color_map = {
 }
 
 # ----------------------------
+# 6) 지도 렌더링 함수 (Folium)
+# ----------------------------
+def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, walking_limit=10):
+    if df is None or df.empty:
+        return
+
+    # 중심점 설정
+    if center_lat is None or center_lon is None:
+        center_lat = df["lat"].mean()
+        center_lon = df["lng"].mean()
+
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles=None)
+
+    # --- 지도 타일 설정 ---
+    # 1. 기본 지도
+    folium.TileLayer("OpenStreetMap", name="기본 지도", control=True).add_to(m)
+
+    # 2. 구글 위성 지도 추가
+    folium.TileLayer(
+        tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        attr="Google",
+        name="위성 지도",
+        control=True,
+        show=False  # 처음에 숨김
+    ).add_to(m)
+
+    # 3. 밝은 배경
+    folium.TileLayer(
+        tiles="CartoDB positron",
+        name="밝은 배경",
+        control=True,
+        show=False  # 처음에 숨김
+    ).add_to(m)
+
+    # 4. 어두운 배경
+    folium.TileLayer(
+        tiles="CartoDB dark_matter",
+        name="어두운 배경",
+        control=True,
+        show=False  # 처음에 숨김
+    ).add_to(m)
+
+    # 레이어 컨트롤 추가
+    folium.LayerControl().add_to(m)
+
+    # ✅ 지하철역 및 반경 원 추가
+    if stations:
+        radius_meters = walking_limit * 80  # 도보 1분당 약 80m 기준
+        for s_name, (s_lat, s_lon) in stations.items():
+            # 역 위치 마커
+            folium.Marker(
+                [s_lat, s_lon],
+                popup=s_name,
+                tooltip=f"🚉 {s_name}",
+                icon=folium.Icon(color="black", icon="subway", prefix="fa")
+            ).add_to(m)
+            
+            # ✅ 역 중심 도보 반경 원 (상호작용 제거)
+            folium.Circle(
+                location=[s_lat, s_lon],
+                radius=radius_meters,
+                color="blue",
+                fill=True,
+                fill_color="blue",
+                fill_opacity=0.1,
+                weight=1,
+                interactive=False  # 클릭/마우스 오버 비활성화
+            ).add_to(m)
+
+    # 매물 마커 추가
+    for _, row in df.iterrows():
+        if pd.isna(row["lat"]) or pd.isna(row["lng"]):
+            continue
+        
+        popup_html = f"""
+            <div style='width:200px'>
+                <b>{row['단지/건물명']}</b><br>
+                가격: {row['가격']}<br>
+                유형: {row['매물유형']} / {row['거래유형']}<br>
+                면적: {row.get('면적(평)', 0):.1f}평
+            </div>
+        """
+        
+        # 1) 색상 설정 (가격구간 기반)
+        bucket = row.get("가격구간", "가격정보없음")
+        color = color_map.get(bucket, "gray")
+        
+        # 2) 아이콘 설정 (매물유형 기반)
+        rlet_type = str(row.get("매물유형", ""))
+        if "아파트" in rlet_type:
+            icon_name = "building"
+        elif "오피스텔" in rlet_type:
+            icon_name = "briefcase"
+        elif "빌라" in rlet_type or "다세대" in rlet_type:
+            icon_name = "home"
+        elif "단독" in rlet_type or "다가구" in rlet_type:
+            icon_name = "user"
+        else:
+            icon_name = "info-circle"
+        
+        folium.Marker(
+            [row["lat"], row["lng"]],
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"[{rlet_type}] {row['단지/건물명']}",
+            icon=folium.Icon(color=color, icon=icon_name, prefix="fa")
+        ).add_to(m)
+
+    st_folium(m, width="stretch", height=500, returned_objects=[])
+
+# ----------------------------
 # A) 상세 페이지
 # ----------------------------
 if st.session_state["selected_atclNo"]:
@@ -289,6 +431,10 @@ if st.session_state["selected_atclNo"]:
     st.subheader(f"📌 상세 보기: {r.get('단지/건물명','')}")
     st.markdown(f"<div class='small'>매물ID: {r.get('매물ID','')}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ✅ 상세 지도 (해당 매물 중심)
+    w_limit = st.session_state.get("walking_time_limit_val", 10)
+    display_map(df[df["매물ID"] == str(atcl_no)], center_lat=r.get("lat"), center_lon=r.get("lng"), zoom=16, walking_limit=w_limit)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("거래유형", r.get("거래유형", ""))
@@ -321,6 +467,14 @@ if st.session_state["selected_atclNo"]:
 st.subheader("🏢 매물 목록 (건물 이름)")
 st.caption("건물 이름을 클릭하면 상세보기로 이동합니다.")
 
+# 🚉 지하철 노선 정보 가져오기 (필터 상태 유지)
+selected_subway = st.session_state.get("subway_line", "선택 안 함")
+
+# ✅ 전체 지도 표시
+curr_stations = SUBWAY_LINES.get(selected_subway) if selected_subway != "선택 안 함" else None
+w_limit = st.session_state.get("walking_time_limit_val", 10)
+display_map(df, stations=curr_stations, walking_limit=w_limit)
+
 # “건물 이름만” 목록처럼 보이게 카드형 리스트 + 버튼으로 클릭 구현
 for _, r in df.iterrows():
     name = r.get("단지/건물명", "")
@@ -328,9 +482,18 @@ for _, r in df.iterrows():
     price = r.get("가격", "")
     bucket = r.get("가격구간", "가격정보없음")
     pyeong = r.get("면적(평)", None)
+    walking_time = r.get("도보시간(분)", None)
 
-    # 간단 요약 라인 (이름 + 가격 + 면적 + 구간)
-    summary = f"{price} / {pyeong:.1f}평" if pd.notna(pyeong) else f"{price}"
+    # 간단 요약 라인 (이름 + 가격 + 면적 + 도보시간)
+    summary_parts = [price]
+    if pd.notna(pyeong):
+        summary_parts.append(f"{pyeong:.1f}평")
+    
+    # ✅ 지하철 노선을 선택했을 때만 도보 시간 표시
+    if selected_subway != "선택 안 함" and pd.notna(walking_time):
+        summary_parts.append(f"🚶 도보 {walking_time:.1f}분")
+    
+    summary = " / ".join(summary_parts)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
     cols = st.columns([4, 2, 2])
@@ -378,7 +541,7 @@ fig_bar = px.bar(
     text="건수",
 )
 fig_bar.update_layout(height=360, xaxis_title="", yaxis_title="매물 수", legend_title_text="")
-st.plotly_chart(fig_bar, use_container_width=True)
+st.plotly_chart(fig_bar, width="stretch")
 
 # 다운로드: 필터된 DataFrame 저장 활용
 st.download_button(
@@ -386,5 +549,5 @@ st.download_button(
     data=df.to_csv(index=False, encoding="utf-8-sig"),
     file_name="filtered_listings.csv",
     mime="text/csv",
-    use_container_width=True,
+    width="stretch",
 )

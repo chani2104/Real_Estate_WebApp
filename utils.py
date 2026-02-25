@@ -1,9 +1,10 @@
 """
-유틸리티: DataFrame 변환 / 가격 파싱 / 엑셀 저장
+유틸리티: DataFrame 변환 / 가격 파싱 / 거리 계산 / 엑셀 저장
 """
 
 import os
 import re
+import math
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -35,6 +36,8 @@ TABLE_COLUMNS = [
     ("directTradYn", "직거래"),
     ("atclCfmYmd", "확인일"),
     ("atclFetrDesc", "특징"),
+    ("lat", "lat"),
+    ("lng", "lng"),
 ]
 
 
@@ -67,99 +70,10 @@ def items_to_dataframe(items: List[Dict[str, Any]]):
 def parse_price_to_manwon(text: Any) -> Optional[int]:
     """
     가격 문자열(hanPrc)을 '만원 단위 정수'로 변환 (정렬/구간 나눔용)
-    예:
-      '4,800' -> 4800
-      '5억' -> 50000
-      '12억 3,000' -> 123000
     """
     if text is None:
         return None
 
-    s = str(text).replace(" ", "").replace(",", "")
-    if s in ("", "-", "없음"):
-        return None
-
-    # "12억3000" / "12억" / "12억3" 같은 케이스
-    m = re.match(r"(?P<eok>\d+)억(?P<rest>\d+)?", s)
-    if m:
-        eok = int(m.group("eok"))
-        rest = m.group("rest")
-        rest_manwon = int(rest) if rest else 0
-        return eok * 10000 + rest_manwon
-
-    # "4800" 같은 만원 단위 숫자
-    if s.isdigit():
-        return int(s)
-
-    return None
-
-
-def price_bucket(manwon: Optional[int]) -> str:
-    """
-    가격 구간 분류 (요구사항)
-      - 5,000만 미만
-      - 5,000만 ~ 5억
-      - 5억 초과
-    ※ 단위: 만원
-      - 5,000만원 = 5000
-      - 5억 = 50000
-    """
-    if manwon is None:
-        return "가격정보없음"
-    if manwon < 5000:
-        return "5,000만 미만"
-    if manwon <= 50000:
-        return "5,000만 ~ 5억"
-    return "5억 초과"
-
-
-def default_filename(region_name: str = "") -> str:
-    """기본 파일명 생성: 매물목록_지역명_날짜.xlsx"""
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    region = (region_name or "지역").replace(" ", "_").strip()
-    return f"매물목록_{region}_{date_str}.xlsx"
-
-
-def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
-    """TABLE_COLUMNS 기반으로 엑셀 저장"""
-    if not items:
-        raise ValueError("저장할 매물 데이터가 없습니다.")
-
-    headers = [h for _, h in TABLE_COLUMNS]
-    keys = [k for k, _ in TABLE_COLUMNS]
-    rows = [[_norm_value(it.get(k)) for k in keys] for it in items]
-
-    if HAS_PANDAS:
-        df = pd.DataFrame(rows, columns=headers)
-        df.to_excel(filepath, index=False, engine="openpyxl")
-    elif HAS_OPENPYXL:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "매물목록"
-        ws.append(headers)
-        for r in rows:
-            ws.append(r)
-        wb.save(filepath)
-    else:
-        raise ImportError("pip install pandas openpyxl 중 하나가 필요합니다.")
-
-    return os.path.abspath(filepath)
-
-def sqm_to_pyeong(sqm: Any) -> Optional[float]:
-    """㎡ → 평 변환 (1평 = 3.305785㎡)"""
-    try:
-        v = float(str(sqm).strip())
-        return v / 3.305785
-    except Exception:
-        return None
-
-def parse_price_to_manwon(text: Any) -> Optional[int]:
-    """
-    hanPrc 같은 가격 문자열을 만원 단위 정수로 변환
-    예: '12억 3,000' -> 123000, '4,800' -> 4800
-    """
-    if text is None:
-        return None
     s = str(text).replace(" ", "").replace(",", "")
     if s in ("", "-", "없음"):
         return None
@@ -174,3 +88,47 @@ def parse_price_to_manwon(text: Any) -> Optional[int]:
         return int(s)
 
     return None
+
+
+def sqm_to_pyeong(sqm: Any) -> Optional[float]:
+    """㎡ → 평 변환 (1평 = 3.305785㎡)"""
+    try:
+        v = float(str(sqm).strip())
+        return v / 3.305785
+    except Exception:
+        return None
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """두 좌표 사이의 직선 거리 (km) 계산"""
+    R = 6371
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = math.sin(dLat / 2) * math.sin(dLat / 2) + \
+        math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+        math.sin(dLon / 2) * math.sin(dLon / 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def estimate_walking_minutes(distance_km, speed_kmh=4.8):
+    """거리 기반 도보 분 계산 (평균 시속 4.8km 기준)"""
+    return (distance_km / speed_kmh) * 60
+
+
+def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
+    """TABLE_COLUMNS 기반으로 엑셀 저장"""
+    if not items:
+        raise ValueError("저장할 매물 데이터가 없습니다.")
+
+    headers = [h for _, h in TABLE_COLUMNS]
+    keys = [k for k, _ in TABLE_COLUMNS]
+    rows = [[_norm_value(it.get(k)) for k in keys] for it in items]
+
+    if HAS_PANDAS:
+        df = pd.DataFrame(rows, columns=headers)
+        df.to_excel(filepath, index=False, engine="openpyxl")
+    else:
+        raise ImportError("pip install pandas openpyxl이 필요합니다.")
+
+    return os.path.abspath(filepath)
