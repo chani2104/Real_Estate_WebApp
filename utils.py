@@ -35,6 +35,9 @@ TABLE_COLUMNS = [
     ("directTradYn", "직거래"),
     ("atclCfmYmd", "확인일"),
     ("atclFetrDesc", "특징"),
+    # 지도 시각화를 위한 좌표 컬럼 (있으면 사용, 없으면 빈 문자열)
+    ("lat", "위도"),
+    ("lng", "경도"),
 ]
 
 
