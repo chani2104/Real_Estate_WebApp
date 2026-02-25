@@ -9,7 +9,7 @@ def process_region(row):
         region_name = row["region_name"]
         score_data = calculate_score(region_name)
         return {
-            "dong_code": row["dong_code"],
+            "sigungu_code": row["sigungu_code"],
             "region_name": region_name,
             **score_data
         }

@@ -70,9 +70,9 @@ def get_all_dongs():
 
     # 3. 데이터 정리
     df_basic = df_basic.rename(columns={
-        "region_cd": "dong_code",
+        "region_cd": "sigungu_code",
         "locatadd_nm": "region_name"
     })
 
     print(f"✅ 필터링 완료: 전국 총 {len(df_basic)}개 기초자치단체(시/군/구) 수집됨")
-    return df_basic[["dong_code", "region_name"]]
+    return df_basic[["sigungu_code", "region_name"]]
