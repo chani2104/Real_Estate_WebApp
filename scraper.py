@@ -1,30 +1,28 @@
 """
-네이버 부동산 API 스크래퍼
-- clusterList: 클러스터 정보 및 totCnt 획득
-- articleList: 매물 상세 목록 (페이지네이션)
+네이버 부동산 API 스크래퍼 (정리본)
+- clusterList: 지도/지역 범위 내 매물 클러스터 및 totCnt 계산
+- articleList: 매물 목록 (페이지네이션)
 """
 
 import time
-import requests
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from urllib.parse import urlencode
 
+import requests
 
-# API 상수
 BASE_URL = "https://m.land.naver.com"
 CLUSTER_LIST_URL = f"{BASE_URL}/cluster/clusterList"
 ARTICLE_LIST_URL = f"{BASE_URL}/cluster/ajax/articleList"
 
-# 매물/거래 유형 (ApiRef.md 기준)
+# 매물/거래 유형 필터 (필요 시 여기만 바꾸면 됨)
 RLET_TP_CD = "OR:APT:JGC:OPST:ABYG:OBYG:VL:YR:DSD:JWJT:SGJT:DDDGG"
 TRAD_TP_CD = "B1:B2:B3"
 
-# 요청 간격 (초) - 차단 방지
-REQUEST_DELAY = 0.8
+REQUEST_DELAY = 0.8  # 차단 방지
 
 
-def _get_headers() -> dict:
-    """모바일 브라우저 UA 및 Referer 설정 (ApiRef 권장)"""
+def _headers() -> Dict[str, str]:
+    """모바일 브라우저처럼 보이게 하는 헤더"""
     return {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -36,29 +34,26 @@ def _get_headers() -> dict:
     }
 
 
-def _calc_bounds(lat: float, lon: float, z: int = 12) -> Tuple[float, float, float, float]:
-    """중심 좌표로부터 지도 범위(btm, lft, top, rgt) 계산"""
+def calc_bounds(lat: float, lon: float, z: int = 12) -> Tuple[float, float, float, float]:
+    """
+    중심좌표 기반 지도 범위(btm, lft, top, rgt) 계산
+    - 현재는 고정 delta 사용 (원하면 z에 따라 delta를 조정하도록 바꿀 수 있음)
+    """
     delta_lat = 0.09
     delta_lon = 0.18
-    return (
-        lat - delta_lat,  # btm
-        lon - delta_lon,   # lft
-        lat + delta_lat,   # top
-        lon + delta_lon,   # rgt
-    )
+    return (lat - delta_lat, lon - delta_lon, lat + delta_lat, lon + delta_lon)
 
 
-def fetch_cluster_list(
-    cortar_no: str,
-    lat: float,
-    lon: float,
-    z: int = 12,
-) -> dict:
+def fetch_cluster_list(cortar_no: str, lat: float, lon: float, z: int = 12) -> Dict[str, Any]:
     """
-    clusterList API 호출
-    Returns: {"tot_cnt": int, "region_name": str, "data": dict} or raises
+    clusterList 호출
+    반환:
+      - tot_cnt: 클러스터 count 합 (총 매물 수 추정)
+      - region_name: 지역명 (가능한 경우)
+      - bounds: btm/lft/top/rgt
     """
-    btm, lft, top, rgt = _calc_bounds(lat, lon, z)
+    btm, lft, top, rgt = calc_bounds(lat, lon, z)
+
     params = {
         "view": "atcl",
         "cortarNo": cortar_no,
@@ -73,27 +68,30 @@ def fetch_cluster_list(
         "rgt": rgt,
         "pCortarNo": "",
     }
+
     url = f"{CLUSTER_LIST_URL}?{urlencode(params)}"
-    resp = requests.get(url, headers=_get_headers(), timeout=15)
+    resp = requests.get(url, headers=_headers(), timeout=15)
     resp.raise_for_status()
     data = resp.json()
 
     if data.get("code") != "success":
         raise RuntimeError(f"clusterList API 오류: {data.get('code', 'unknown')}")
 
+    # tot_cnt 계산: ARTICLE 배열의 count 합
     articles = data.get("data", {}).get("ARTICLE", [])
-    tot_cnt = sum(item.get("count", 1) for item in articles)
+    tot_cnt = sum(a.get("count", 1) for a in articles)
 
-    region_name = ""
-    cortar = data.get("data", {}).get("cortar", {})
-    if cortar:
-        detail = cortar.get("detail", {})
-        region_name = detail.get("regionName", "")
+    # regionName 추출
+    region_name = (
+        data.get("data", {})
+        .get("cortar", {})
+        .get("detail", {})
+        .get("regionName", "")
+    )
 
     return {
         "tot_cnt": tot_cnt,
         "region_name": region_name,
-        "data": data,
         "btm": btm,
         "lft": lft,
         "top": top,
@@ -112,13 +110,16 @@ def fetch_article_list(
     top: Optional[float] = None,
     rgt: Optional[float] = None,
     z: int = 12,
-) -> dict:
+) -> Dict[str, Any]:
     """
-    articleList API 호출
-    Returns: {"body": list, "more": bool, "page": int}
+    articleList 호출
+    반환:
+      - body: 매물 리스트 (List[dict])
+      - more: 다음 페이지 존재 여부
+      - page: 현재 페이지
     """
     if btm is None:
-        btm, lft, top, rgt = _calc_bounds(lat, lon, z)
+        btm, lft, top, rgt = calc_bounds(lat, lon, z)
 
     params = {
         "rletTpCd": RLET_TP_CD,
@@ -135,8 +136,9 @@ def fetch_article_list(
         "cortarNo": cortar_no,
         "page": page,
     }
+
     url = f"{ARTICLE_LIST_URL}?{urlencode(params)}"
-    resp = requests.get(url, headers=_get_headers(), timeout=15)
+    resp = requests.get(url, headers=_headers(), timeout=15)
     resp.raise_for_status()
     data = resp.json()
 
@@ -150,32 +152,31 @@ def fetch_article_list(
     }
 
 
-def scrape_all_articles(
+def scrape_articles(
     cortar_no: str,
     lat: float,
     lon: float,
+    limit: int = 50,
     progress_callback=None,
     cancel_check=None,
-) -> List[dict]:
+) -> List[Dict[str, Any]]:
     """
-    clusterList → articleList 순차 호출로 전체 매물 수집
-    progress_callback(current, total, message)
-    cancel_check() -> True면 중단
+    clusterList → articleList 호출로 매물 수집
+    - limit 만큼만 모이면 중단 (대시보드용 빠른 수집)
     """
-    # 1. clusterList
     time.sleep(REQUEST_DELAY)
     cluster = fetch_cluster_list(cortar_no, lat, lon)
     tot_cnt = cluster["tot_cnt"]
     btm, lft, top, rgt = cluster["btm"], cluster["lft"], cluster["top"], cluster["rgt"]
 
-    if progress_callback:
-        progress_callback(0, tot_cnt, "매물 목록 조회 중...")
-
     if tot_cnt == 0:
         return []
 
-    all_items = []
+    all_items: List[Dict[str, Any]] = []
     page = 1
+
+    if progress_callback:
+        progress_callback(0, min(tot_cnt, limit), "매물 수집 시작...")
 
     while True:
         if cancel_check and cancel_check():
@@ -194,15 +195,19 @@ def scrape_all_articles(
             rgt=rgt,
         )
 
-        items = result.get("body", [])
+        items = result["body"]
         all_items.extend(items)
 
         if progress_callback:
-            progress_callback(len(all_items), tot_cnt, f"수집 중... ({len(all_items)}/{tot_cnt})")
+            progress_callback(min(len(all_items), limit), min(tot_cnt, limit), f"수집 중... ({len(all_items)})")
 
-        if not result.get("more", False):
+        # ✅ limit만 모이면 중단
+        if len(all_items) >= limit:
+            break
+
+        if not result["more"]:
             break
 
         page += 1
 
-    return all_items
+    return all_items[:limit]

@@ -1,12 +1,12 @@
 """
-유틸리티: 엑셀 저장, 지역 설정
+유틸리티: DataFrame 변환 / 가격 파싱 / 엑셀 저장
 """
 
 import os
+import re
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-# pandas/openpyxl 사용 (없으면 기본 구현으로 대체 시도)
 try:
     import pandas as pd
     HAS_PANDAS = True
@@ -20,7 +20,7 @@ except ImportError:
     HAS_OPENPYXL = False
 
 
-# 테이블 표시용 컬럼 정의 (ApiRef.md 기반)
+# 표시/저장에 사용할 컬럼 정의 (네이버 item(dict)의 key → 표 헤더)
 TABLE_COLUMNS = [
     ("atclNo", "매물ID"),
     ("atclNm", "단지/건물명"),
@@ -38,38 +38,96 @@ TABLE_COLUMNS = [
 ]
 
 
-def item_to_row(item: Dict[str, Any]) -> List[Any]:
-    """API 응답 item을 테이블 행(리스트)로 변환"""
-    row = []
-    for key, _ in TABLE_COLUMNS:
-        val = item.get(key, "")
-        if isinstance(val, list):
-            val = ", ".join(str(v) for v in val) if val else ""
-        row.append(val if val is not None else "")
-    return row
+def _norm_value(v: Any) -> str:
+    """리스트/None 처리 포함해서 표에 넣기 좋은 문자열로 정규화"""
+    if v is None:
+        return ""
+    if isinstance(v, list):
+        return ", ".join(map(str, v)) if v else ""
+    return str(v)
+
+
+def items_to_dataframe(items: List[Dict[str, Any]]):
+    """
+    네이버 articleList의 body(items)를 TABLE_COLUMNS 기준으로 DataFrame으로 변환
+    """
+    if not HAS_PANDAS:
+        raise ImportError("pandas가 필요합니다. pip install pandas")
+
+    keys = [k for k, _ in TABLE_COLUMNS]
+    headers = [h for _, h in TABLE_COLUMNS]
+
+    rows = []
+    for it in items:
+        rows.append([_norm_value(it.get(k)) for k in keys])
+
+    return pd.DataFrame(rows, columns=headers)
+
+
+def parse_price_to_manwon(text: Any) -> Optional[int]:
+    """
+    가격 문자열(hanPrc)을 '만원 단위 정수'로 변환 (정렬/구간 나눔용)
+    예:
+      '4,800' -> 4800
+      '5억' -> 50000
+      '12억 3,000' -> 123000
+    """
+    if text is None:
+        return None
+
+    s = str(text).replace(" ", "").replace(",", "")
+    if s in ("", "-", "없음"):
+        return None
+
+    # "12억3000" / "12억" / "12억3" 같은 케이스
+    m = re.match(r"(?P<eok>\d+)억(?P<rest>\d+)?", s)
+    if m:
+        eok = int(m.group("eok"))
+        rest = m.group("rest")
+        rest_manwon = int(rest) if rest else 0
+        return eok * 10000 + rest_manwon
+
+    # "4800" 같은 만원 단위 숫자
+    if s.isdigit():
+        return int(s)
+
+    return None
+
+
+def price_bucket(manwon: Optional[int]) -> str:
+    """
+    가격 구간 분류 (요구사항)
+      - 5,000만 미만
+      - 5,000만 ~ 5억
+      - 5억 초과
+    ※ 단위: 만원
+      - 5,000만원 = 5000
+      - 5억 = 50000
+    """
+    if manwon is None:
+        return "가격정보없음"
+    if manwon < 5000:
+        return "5,000만 미만"
+    if manwon <= 50000:
+        return "5,000만 ~ 5억"
+    return "5억 초과"
+
+
+def default_filename(region_name: str = "") -> str:
+    """기본 파일명 생성: 매물목록_지역명_날짜.xlsx"""
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    region = (region_name or "지역").replace(" ", "_").strip()
+    return f"매물목록_{region}_{date_str}.xlsx"
 
 
 def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
-    """
-    매물 목록을 엑셀 파일로 저장
-    Returns: 저장된 파일 경로
-    """
+    """TABLE_COLUMNS 기반으로 엑셀 저장"""
     if not items:
         raise ValueError("저장할 매물 데이터가 없습니다.")
 
-    # 컬럼 헤더
-    headers = [col[1] for col in TABLE_COLUMNS]
-    keys = [col[0] for col in TABLE_COLUMNS]
-
-    rows = []
-    for item in items:
-        row = []
-        for key in keys:
-            val = item.get(key, "")
-            if isinstance(val, list):
-                val = ", ".join(str(v) for v in val) if val else ""
-            row.append(val if val is not None else "")
-        rows.append(row)
+    headers = [h for _, h in TABLE_COLUMNS]
+    keys = [k for k, _ in TABLE_COLUMNS]
+    rows = [[_norm_value(it.get(k)) for k in keys] for it in items]
 
     if HAS_PANDAS:
         df = pd.DataFrame(rows, columns=headers)
@@ -79,43 +137,40 @@ def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
         ws = wb.active
         ws.title = "매물목록"
         ws.append(headers)
-        for row in rows:
-            ws.append(row)
+        for r in rows:
+            ws.append(r)
         wb.save(filepath)
     else:
-        raise ImportError(
-            "엑셀 저장을 위해 pandas 또는 openpyxl 패키지가 필요합니다.\n"
-            "pip install pandas openpyxl"
-        )
+        raise ImportError("pip install pandas openpyxl 중 하나가 필요합니다.")
 
     return os.path.abspath(filepath)
 
+def sqm_to_pyeong(sqm: Any) -> Optional[float]:
+    """㎡ → 평 변환 (1평 = 3.305785㎡)"""
+    try:
+        v = float(str(sqm).strip())
+        return v / 3.305785
+    except Exception:
+        return None
 
-def default_filename(region_name: str = "") -> str:
-    """기본 파일명 생성: 매물목록_지역명_날짜.xlsx"""
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    region = region_name.replace(" ", "_").strip() or "지역"
-    return f"매물목록_{region}_{date_str}.xlsx"
+def parse_price_to_manwon(text: Any) -> Optional[int]:
+    """
+    hanPrc 같은 가격 문자열을 만원 단위 정수로 변환
+    예: '12억 3,000' -> 123000, '4,800' -> 4800
+    """
+    if text is None:
+        return None
+    s = str(text).replace(" ", "").replace(",", "")
+    if s in ("", "-", "없음"):
+        return None
 
+    m = re.match(r"(?P<eok>\d+)억(?P<rest>\d+)?", s)
+    if m:
+        eok = int(m.group("eok"))
+        rest = int(m.group("rest")) if m.group("rest") else 0
+        return eok * 10000 + rest
 
-def _load_region_config() -> Dict[str, tuple]:
-    """region_config.json 파일에서 지역 설정 로드"""
-    import json
+    if s.isdigit():
+        return int(s)
 
-    config_path = os.path.join(os.path.dirname(__file__), "region_config.json")
-    config = {}
-
-    if os.path.isfile(config_path):
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for cortar_no, v in data.items():
-                if isinstance(v, (list, tuple)) and len(v) >= 3:
-                    config[cortar_no] = (float(v[0]), float(v[1]), str(v[2]))
-        except Exception as e:
-            print(f"설정 파일 로드 오류: {e}")
-    
-    return config
-
-
-REGION_CONFIG = _load_region_config()
+    return None
