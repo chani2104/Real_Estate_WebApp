@@ -36,7 +36,7 @@ def main():
                 results.append(result)
 
     final_df = pd.DataFrame(results)
-    final_df.to_csv("전국_동_인프라_점수.csv", index=False, encoding="utf-8-sig")
+    final_df.to_csv("전국_기초자치_인프라_점수.csv", index=False, encoding="utf-8-sig")
     print(f"✅ 분석 완료! 저장된 행 개수: {len(final_df)}")
 
 if __name__ == "__main__":
