@@ -49,27 +49,47 @@ def item_to_row(item: Dict[str, Any]) -> List[Any]:
     return row
 
 
-def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
-    """
-    매물 목록을 엑셀 파일로 저장
-    Returns: 저장된 파일 경로
-    """
+def _items_to_tabular(
+    items: List[Dict[str, Any]],
+) -> tuple[list[str], list[str], list[list[Any]]]:
+    """TABLE_COLUMNS 기반으로 헤더/키/행 데이터 생성"""
     if not items:
         raise ValueError("저장할 매물 데이터가 없습니다.")
 
-    # 컬럼 헤더
     headers = [col[1] for col in TABLE_COLUMNS]
     keys = [col[0] for col in TABLE_COLUMNS]
 
-    rows = []
+    rows: list[list[Any]] = []
     for item in items:
-        row = []
+        row: list[Any] = []
         for key in keys:
             val = item.get(key, "")
             if isinstance(val, list):
                 val = ", ".join(str(v) for v in val) if val else ""
             row.append(val if val is not None else "")
         rows.append(row)
+
+    return headers, keys, rows
+
+
+def items_to_dataframe(items: List[Dict[str, Any]]):
+    """매물 목록을 pandas.DataFrame으로 변환 (Streamlit/Jupyter 재사용용)"""
+    if not HAS_PANDAS:
+        raise ImportError(
+            "데이터프레임 생성을 위해 pandas 패키지가 필요합니다.\n"
+            "pip install pandas"
+        )
+
+    headers, _, rows = _items_to_tabular(items)
+    return pd.DataFrame(rows, columns=headers)
+
+
+def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
+    """
+    매물 목록을 엑셀 파일로 저장
+    Returns: 저장된 파일 경로
+    """
+    headers, _, rows = _items_to_tabular(items)
 
     if HAS_PANDAS:
         df = pd.DataFrame(rows, columns=headers)
@@ -96,6 +116,47 @@ def default_filename(region_name: str = "") -> str:
     date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     region = region_name.replace(" ", "_").strip() or "지역"
     return f"매물목록_{region}_{date_str}.xlsx"
+
+
+def save_items_to_ipynb(
+    items: List[Dict[str, Any]],
+    filepath: str,
+    region_name: str = "",
+) -> str:
+    """
+    매물 목록을 Jupyter Notebook(.ipynb) 파일로 저장
+    - 첫 코드 셀에서 pandas.DataFrame을 `df` 변수로 생성
+    """
+    if not HAS_PANDAS:
+        raise ImportError(
+            "ipynb 저장을 위해 pandas 패키지가 필요합니다.\n"
+            "pip install pandas"
+        )
+
+    try:
+        import nbformat
+        from nbformat.v4 import new_notebook, new_code_cell
+    except ImportError:
+        raise ImportError(
+            "ipynb 저장을 위해 nbformat 패키지가 필요합니다.\n"
+            "pip install nbformat"
+        )
+
+    df = items_to_dataframe(items)
+    records = df.to_dict(orient="records")
+
+    code_lines = [
+        "import pandas as pd",
+        f"# 지역: {region_name}" if region_name else "# 네이버 부동산 매물 목록",
+        f"data = {repr(records)}",
+        "df = pd.DataFrame(data)",
+        "df",
+    ]
+    code = "\n".join(code_lines)
+
+    nb = new_notebook(cells=[new_code_cell(code)])
+    nbformat.write(nb, filepath)
+    return os.path.abspath(filepath)
 
 
 def _load_region_config() -> Dict[str, tuple]:
