@@ -75,17 +75,37 @@ df = load_data()
 with st.sidebar:
     st.header("🗺️ 지역 및 조건 선택")
     all_sido = ["전국"] + sorted(df['sidoNm'].unique().tolist())
-    selected_sido = st.selectbox("분석할 시도를 선택하세요", all_sido)
+    selected_sido = st.selectbox("분석할 시도를 선택하세요", all_sido, key="sido_select")
     
     st.divider()
+    
+    # --- [추가] 분석 기준 선택 섹션 ---
+    st.header("🔎 분석 기준 설정")
+    score_type = st.radio(
+        "순위 산정 기준 선택", 
+        ["나만의 맞춤 점수", "기본 인프라 점수"], 
+        horizontal=False, # 사이드바에서는 세로 배치가 더 깔끔합니다
+        help="사용자가 설정한 가중치를 반영할지(Custom), 지역의 객관적 총점(Total)을 기반으로 할지 결정합니다.",
+        key="score_type_select"
+    )
+    # 변수 설정
+    score_col = 'custom_score' if score_type.startswith("나만의") else 'total_score'
+    score_label = "나만의 맞춤 점수" if score_col == 'custom_score' else "기본 인프라 점수"
+    
+    st.divider()
+    
+    # 가중치 설정 (나만의 맞춤 점수 선택 시에만 강조되도록 구성)
     st.header("⚖️ 나만의 인프라 가중치")
+    if score_col == 'total_score':
+        st.caption("⚠️ 현재 '기본 인프라 점수' 기준입니다. 가중치를 반영하려면 위에서 '나만의 맞춤 점수'를 선택하세요.")
+    
     w_subway = st.slider("🚇 역세권", 0, 10, 5)
     w_school = st.slider("🎓 교육", 0, 10, 4)
     w_hospital = st.slider("🏥 의료", 0, 10, 3)
     w_park = st.slider("🌳 공원", 0, 10, 2)
     w_mall = st.slider("🛍️ 쇼핑", 0, 10, 1)
 
-# --- 필터링 및 점수 계산 ---
+# --- 필터링 및 점수 계산 (기존과 동일하지만 score_col에 따라 메인 화면이 반응함) ---
 view_df = df.copy()
 if selected_sido != "전국":
     view_df = view_df[view_df['sidoNm'] == selected_sido]
@@ -178,29 +198,35 @@ with col1:
         ).add_to(m)
     st_folium(m, width="100%", height=500, key="main_map")
 
+
 # ==========================================================
-# 중단: 인프라 심층 분석 
+# 중단: 인프라 심층 분석
 # ==========================================================
 st.divider()
 st.title("📊 인프라 심층 분석")
 
-# 인프라 점수 계산 설명 (타이틀 바로 아래로 이동)
+# 인프라 점수 계산 설명
 with st.expander("💡 인프라 만족도 점수는 어떻게 계산되나요?"):
-    st.write("항목 8개의 인프라 수치를 0~1로 정규화한 뒤, 사용자가 설정한 가중치를 반영하여 100점 만점으로 환산한 결과입니다.")
+    st.write("8대 핵심 인프라 수치를 0~1로 정규화한 뒤, 사용자가 설정한 가중치를 반영하여 100점 만점으로 환산한 결과입니다.")
     st.write("**[포함된 인프라 항목]**")
     st.write("🎓 학교, 🚇 지하철, 🏥 병원, ☕ 카페, ✍️ 학원, 🛍️ 백화점, 🏪 편의점, 🌳 공원")
 
-st.info(f"'{selected_sido}' 지역 기준 차트입니다. 기준 점수를 선택하여 순위를 확인하세요.")
+st.info(f"📍 현재 사이드바 설정에 따라 **'{score_label}'** 기준으로 분석 중입니다.")
 
-score_type = st.radio("차트 기준 점수", ["나만의 맞춤 점수 (custom_score)", "기본 인프라 점수 (total_score)"], horizontal=True)
-score_col = 'custom_score' if score_type.startswith("나만의") else 'total_score'
-score_label = "나만의 맞춤 점수" if score_col == 'custom_score' else "기본 인프라 점수"
-
+# 메인 바 차트 (사이드바에서 선택한 score_col에 따라 자동 정렬)
 top20_df = view_df.sort_values(by=score_col, ascending=False).head(20)
-fig_top20 = px.bar(top20_df, x=score_col, y="full_region", color="sidoNm", orientation="h",
-    title=f"'{selected_sido}' {score_label} Top 20",
-    labels={score_col: f"{score_label} (점)", "full_region": "지역명"}, template="plotly_white")
-fig_top20.update_layout(yaxis={"categoryorder": "total ascending"}, height=500)
+fig_top20 = px.bar(
+    top20_df, 
+    x=score_col, 
+    y="full_region", 
+    color=score_col, 
+    color_continuous_scale="Viridis",
+    orientation="h",
+    title=f"'{selected_sido}' {score_label} Top 20 지역",
+    labels={score_col: f"{score_label} (점)", "full_region": "지역명"}, 
+    template="plotly_white"
+)
+fig_top20.update_layout(yaxis={"categoryorder": "total ascending"}, height=550)
 st.plotly_chart(fig_top20, use_container_width=True)
 
 # --- 이하 차트 및 테이블 로직 동일 ---
