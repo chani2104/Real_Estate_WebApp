@@ -10,10 +10,10 @@ import os
 st.set_page_config(layout="wide", page_title="부동산 가이드 v4")
 
 # --- 상수 및 헬퍼 함수 ---
-INFRA_COLS = ["school", "subway", "hospital", "cafe", "academy", "department", "convenience", "park"]
+INFRA_COLS = ["school", "subway", "hospital", "cafe", "academy", "department", "convenience", "culture"]
 INFRA_LABELS = {
     "school": "학교", "subway": "지하철", "hospital": "병원", "cafe": "카페",
-    "academy": "학원", "department": "백화점", "convenience": "편의점", "park": "공원"
+    "academy": "학원", "department": "백화점", "convenience": "편의점", "culture": "문화생활"
 }
 
 def format_price(val):
@@ -102,7 +102,7 @@ with st.sidebar:
     w_subway = st.slider("🚇 역세권", 0, 10, 5)
     w_school = st.slider("🎓 교육", 0, 10, 4)
     w_hospital = st.slider("🏥 의료", 0, 10, 3)
-    w_park = st.slider("🌳 공원", 0, 10, 2)
+    w_culture = st.slider("🎭 문화생활", 0, 10, 2)
     w_mall = st.slider("🛍️ 쇼핑", 0, 10, 1)
 
 # --- 필터링 및 점수 계산 (기존과 동일하지만 score_col에 따라 메인 화면이 반응함) ---
@@ -110,14 +110,14 @@ view_df = df.copy()
 if selected_sido != "전국":
     view_df = view_df[view_df['sidoNm'] == selected_sido]
 
-weights_sum = w_subway + w_school + w_hospital + w_park + w_mall
+weights_sum = w_subway + w_school + w_hospital + w_culture + w_mall
 if weights_sum > 0:
     edu_norm_score = (view_df.get('norm_school', 0) + view_df.get('norm_academy', 0)) / 2
     infra_score = (
         (view_df.get('norm_subway', 0) * w_subway) +
         (edu_norm_score * w_school) +
         (view_df.get('norm_hospital', 0) * w_hospital) +
-        (view_df.get('norm_park', 0) * w_park) +
+        (view_df.get('norm_culture', 0) * w_culture) +
         (view_df.get('norm_department', 0) * w_mall)
     )
     view_df['custom_score'] = (infra_score / weights_sum * 100).round(1)
@@ -184,7 +184,8 @@ with col1:
             st.session_state.map_zoom = 7 if selected_sido == "전국" else 10
         st.rerun()
 
-    m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles="cartodbpositron")
+    m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
+    
     for _, row in view_df.iterrows():
         popup_html = f"<b>{row['full_region']}</b><br>점수: {row['custom_score']:.1f}"
         folium.CircleMarker(
