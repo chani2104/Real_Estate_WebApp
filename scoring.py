@@ -1,36 +1,21 @@
 from kakao_api import get_kakao_count
 
-def calculate_score(region_name):
-    # 각 카테고리별 검색 결과 개수 조회 (총 8개 항목)
-    school = get_kakao_count("초등학교", region_name)
-    subway = get_kakao_count("지하철역", region_name)
-    hospital = get_kakao_count("병원", region_name)
-    cafe = get_kakao_count("카페", region_name)
-    academy = get_kakao_count("학원", region_name)
-    department = get_kakao_count("백화점", region_name)
-    convenience = get_kakao_count("편의점", region_name)
-    park = get_kakao_count("공원", region_name)
+def calculate_score(region_name, lat, lng):
+    # 8가지 카테고리 코드로 인프라 개수 조회
+    school      = get_kakao_count("SC4", lat, lng)  # 학교
+    subway      = get_kakao_count("SW8", lat, lng)  # 지하철역
+    hospital    = get_kakao_count("HP8", lat, lng)  # 병원
+    cafe        = get_kakao_count("CE7", lat, lng)  # 카페
+    academy     = get_kakao_count("AC5", lat, lng)  # 학원
+    department  = get_kakao_count("MT1", lat, lng)  # 대형마트(백화점 대용)
+    convenience = get_kakao_count("CS2", lat, lng)  # 편의점
+    culture     = get_kakao_count("CT1", lat, lng)  # 문화시설 (공원 대용)
 
-    # 가중치 설정 (사용자 편의에 따라 조정 가능)
-    total_score = (
-        (school * 1) +       # 교육 중요도 상향
-        (subway * 1) +       # 역세권
-        (hospital * 1) +     # 병세권
-        (academy * 1) +      # 학세권
-        (department * 1) +   # 몰세권
-        (cafe * 1) +         # 편의시설
-        (convenience * 1) +  # 생활밀착
-        (park * 1)           # 숲세권
-    )
+    total_score = (school + subway + hospital + cafe + academy + department + convenience + culture)
 
     return {
-        "school": school,
-        "subway": subway,
-        "hospital": hospital,
-        "cafe": cafe,
-        "academy": academy,
-        "department": department,
-        "convenience": convenience,
-        "park": park,
+        "school": school, "subway": subway, "hospital": hospital,
+        "cafe": cafe, "academy": academy, "department": department,
+        "convenience": convenience, "culture": culture,
         "total_score": total_score
     }

@@ -45,7 +45,7 @@ with col1:
 
 with col2:
     st.subheader("📉 인프라 항목 간 상관관계")
-    infra_cols = ["school", "subway", "hospital", "cafe", "academy", "department", "convenience", "park"]
+    infra_cols = ["school", "subway", "hospital", "cafe", "academy", "department", "convenience", "culture"]
     corr = filtered_df[infra_cols].corr()
     fig_heat = px.imshow(corr, text_auto=True, color_continuous_scale='RdBu_r')
     st.plotly_chart(fig_heat, use_container_width=True)
