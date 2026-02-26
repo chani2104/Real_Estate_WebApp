@@ -942,6 +942,55 @@ def render_search():
                 )
             st.markdown("</div>", unsafe_allow_html=True)
 
+            # 📷 매물 사진 (목록 썸네일 + 상세 갤러리 병합)
+            thumb_url = None
+            raw_rep = row.get("대표이미지")
+            if isinstance(raw_rep, str) and raw_rep.strip():
+                u = raw_rep.strip()
+                # 사용자가 준 코드와 동일한 규칙으로 도메인 보정
+                if u.startswith("//"):
+                    u = "https:" + u
+                elif u.startswith("/"):
+                    u = "https://landthumb-phinf.pstatic.net" + u
+                thumb_url = u
+
+            atcl_no = str(row["매물ID"])
+            gallery_urls: List[str] = []
+            try:
+                # 네이버 프론트 API/HTML에서 방 사진(갤러리) 시도
+                gallery_urls = scraper.get_article_image_urls(atcl_no) or []
+            except Exception:
+                gallery_urls = []
+
+            # 썸네일 + 갤러리 URL을 하나의 리스트로 합치고 중복 제거
+            merged: List[str] = []
+            if thumb_url:
+                merged.append(thumb_url)
+            merged.extend(gallery_urls)
+            # 순서 유지하면서 중복 제거
+            seen = set()
+            final_urls: List[str] = []
+            for u in merged:
+                if not isinstance(u, str):
+                    continue
+                uu = u.strip()
+                if not uu or uu in seen:
+                    continue
+                seen.add(uu)
+                final_urls.append(uu)
+
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>📷 매물 사진</div>", unsafe_allow_html=True)
+            if final_urls:
+                # 너무 많은 이미지는 부담이 될 수 있어 상위 12장만 노출
+                st.image(final_urls[:12])
+            else:
+                st.markdown(
+                    "<div class='muted'>해당 매물에 대해 불러올 수 있는 사진이 없거나, 네이버 측 응답이 없어 이미지를 표시하지 못했습니다.</div>",
+                    unsafe_allow_html=True,
+                )
+            st.markdown("</div>", unsafe_allow_html=True)
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     # dashboard (like naver's mini stats)

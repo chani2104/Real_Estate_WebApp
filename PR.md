@@ -179,3 +179,22 @@
 - `folium` + `streamlit-folium` 조합을 사용하여, **지역 중심좌표 기반의 인터랙티브 지도** 와 **매물 리스트** 를 같은 화면에 배치한다.
 - 1차 버전에서는 **지역 단위 지도 + 매물 기본 마커/리스트** 를 목표로 하고, 이후 점진적으로 **클러스터링, 인터랙션, 자연어 검색 고도화** 를 확장하는 방향을 제안한다.
 
+---
+
+## 추가: 매물 상세 사진 노출 (요청 기반 JSON 설명)
+
+```json
+{
+  "feature": "listing_detail_images",
+  "trigger": "검색 탭 좌측 목록에서 사용자가 '지도/상세 보기' 버튼을 클릭했을 때",
+  "behavior": {
+    "thumbnail": "네이버 articleList 응답의 repImgUrl을 DataFrame의 '대표이미지'로 보존하고, 우측 상세 패널의 '📷 매물 사진' 카드에서 항상 최소 1장 썸네일을 노출한다.",
+    "gallery": "atclNo(매물ID)를 기반으로 fin.land.naver.com gallery/basicInfo API와 m.land HTML을 순차적으로 조회하는 get_article_image_urls를 호출해, 가능한 경우 방 내부 갤러리 이미지를 추가로 가져온다.",
+    "render": "지도 카드 아래, 상세 카드 아래에 위치한 사진 카드에서 썸네일 + 갤러리 URL을 중복 제거 후 최대 12장까지 st.image로 렌더링한다."
+  },
+  "constraints": {
+    "original_code": "기존 검색/필터/지도/리스트 로직은 그대로 두고, utils에 컬럼 1개(repImgUrl), scraper에 이미지 전용 함수/유틸, app.py 우측 패널의 '매물 사진' 카드만 최소 침습 방식으로 추가했다."
+  }
+}
+```
+

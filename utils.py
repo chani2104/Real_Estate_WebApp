@@ -18,6 +18,8 @@ TABLE_COLUMNS = [
     ("rletTpNm", "매물유형"),
     ("tradTpNm", "거래유형"),
     ("hanPrc", "가격"),
+    # 목록 API에서 내려오는 대표 썸네일 URL
+    ("repImgUrl", "대표이미지"),
     ("spc2", "면적(㎡)"),
     ("flrInfo", "층"),
     ("direction", "방향"),
