@@ -133,47 +133,52 @@ col1, col2 = st.columns([0.6, 0.4], gap="large")
 highlight_codes = set()
 
 with col2:
-    if selected_sido == "전국":
-        st.subheader("📊 전국 추천 테마 TOP 5")
-        theme = st.radio("관심 테마", ["월세", "전세", "인프라"], horizontal=True, key="theme_radio")
-        
-        if theme == "월세":
-            target_df = view_df[view_df['월세_평균월세'] > 0].sort_values('월세_평균월세', ascending=True).head(5)
-            metric_col, title = "월세_평균월세", "💰 월세가 가장 저렴한 5곳"
-        elif theme == "전세":
-            target_df = view_df[view_df['전세_평균보증금'] > 0].sort_values('전세_평균보증금', ascending=True).head(5)
-            metric_col, title = "전세_평균보증금", "🏠 전세가 가장 저렴한 5곳"
-        else:
-            target_df = view_df.sort_values('custom_score', ascending=False).head(5)
-            metric_col, title = "custom_score", "✨ 인프라 만족도 TOP 5"
+    # 1. 제목 및 테마 선택 UI (전국/지역 공통)
+    header_title = "📊 전국 추천 테마 TOP 5" if selected_sido == "전국" else f"🏆 {selected_sido} 항목별 TOP 5"
+    st.subheader(header_title)
+    
+    theme = st.radio("관심 테마", ["월세", "전세", "인프라"], horizontal=True, key="theme_radio_combined")
+    
+    # 2. 데이터 필터링 및 정렬 로직 (공통)
+    if theme == "월세":
+        target_df = view_df[view_df['월세_평균월세'] > 0].sort_values('월세_평균월세', ascending=True).head(5)
+        metric_col, theme_title = "월세_평균월세", "💰 월세가 저렴한 지역"
+    elif theme == "전세":
+        target_df = view_df[view_df['전세_평균보증금'] > 0].sort_values('전세_평균보증금', ascending=True).head(5)
+        metric_col, theme_title = "전세_평균보증금", "🏠 전세가 저렴한 지역"
+    else: # 인프라
+        target_df = view_df.sort_values('custom_score', ascending=False).head(5)
+        metric_col, theme_title = "custom_score", "✨ 인프라 만족도 상위"
 
-        st.write(f"#### {title}")
-        highlight_codes = set(target_df['sggCd_key'])
-        
-        # 순위 번호 1부터 출력하도록 수정
-        for i, (idx, data) in enumerate(target_df.iterrows()):
-            r_col1, r_col2 = st.columns([0.8, 0.2])
-            val = f"{data[metric_col]:.1f}점" if metric_col == "custom_score" else format_price(data[metric_col])
-            r_col1.markdown(f"**{i+1}위. {data['full_region']}** : {val}")
-            if r_col2.button("🔍", key=f"btn_map_{data['sggCd_key']}", use_container_width=True):
-                st.session_state.map_center = [data['위도'], data['경도']]
-                st.session_state.map_zoom = 12
-                st.rerun()
+    st.write(f"#### {theme_title}")
+    highlight_codes = set(target_df['sggCd_key'])
 
+    # 3. 리스트 출력 로직
+    if target_df.empty:
+        st.info("해당 조건의 데이터가 없습니다.")
     else:
-        st.subheader(f"🏆 {selected_sido} 인프라 만족도 TOP 5")
-        top5_df = view_df.sort_values('custom_score', ascending=False).head(5)
-        highlight_codes = set(top5_df['sggCd_key'])
-
-        for i, row in enumerate(top5_df.itertuples()):
+       for i, (idx, data) in enumerate(target_df.iterrows()):
             r_col1, r_col2 = st.columns([0.8, 0.2])
-            with r_col1:
-                with st.expander(f"**{i+1}위: {row.full_region}** ({row.custom_score:.1f}점)"):
-                    st.markdown(f"**평균 전세**: {format_price(row.전세_평균보증금)}")
-                    st.markdown(f"**평균 월세**: {format_price(row.월세_평균월세)}")
-            if r_col2.button("🔍", key=f"btn_map_{row.sggCd_key}", use_container_width=True):
-                st.session_state.map_center = [row.위도, row.경도]
-                st.session_state.map_zoom = 13
+            
+            # 특정 지역(시도)을 선택했을 때는 상세 정보(expander)를 포함하여 출력
+            if selected_sido != "전국":
+                with r_col1:
+                    # 제목에서 점수를 빼고 지역명만 노출
+                    with st.expander(f"**{i+1}위: {data['full_region']}**"):
+                        st.markdown(f"🏠 **평균 전세**: {format_price(data['전세_평균보증금'])}")
+                        st.markdown(f"💰 **평균 월세**: {format_price(data['월세_평균월세'])}")
+                        # 요청하신 인프라 점수 항목 추가
+                        st.markdown(f"✨ **인프라 점수**: {data['custom_score']:.1f}점")
+            
+            # 전국 모드일 때 보여줄 기본 텍스트 라인
+            else:
+                val = f"{data[metric_col]:.1f}점" if metric_col == "custom_score" else format_price(data[metric_col])
+                r_col1.markdown(f"**{i+1}위. {data['full_region']}** : {val}")
+
+            # 🔍 지도 이동 버튼 (공통)
+            if r_col2.button("🔍", key=f"btn_map_nav_{data['sggCd_key']}", use_container_width=True):
+                st.session_state.map_center = [data['위도'], data['경도']]
+                st.session_state.map_zoom = 13 if selected_sido != "전국" else 12
                 st.rerun()
 
 with col1:
