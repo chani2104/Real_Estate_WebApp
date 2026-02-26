@@ -3,6 +3,7 @@ import re
 from urllib.parse import quote, urlparse, parse_qs
 
 import requests
+import team_explore
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -550,11 +551,13 @@ def kv_grid(data: dict, cols: int = 3):
             )
 
 
-def topbar():
+def topbar(title="부동산 매물 검색", subtitle=None):
+    sub_html = f"<div class='topbar-sub'>{subtitle}</div>" if subtitle else ""
     st.markdown(
-        """
+        f"""
         <div class="topbar">
-          <div class="brand">부동산 매물 검색<span class="brand-dot">
+          <div class="brand">{title}<span class="brand-dot">.</span></div>
+          {sub_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -736,47 +739,21 @@ def render_lobby():
 
 
 def render_explore():
-    topbar()
+    topbar("지역 탐색", "전국/시도별 이사 가이드")
 
-    if st.button("← 로비"):
+    if st.button(" ← 메인으로"):
         st.session_state.page = "lobby"
         st.rerun()
 
-    st.markdown("<div class='card'><div class='section-title'>🧭 지역 탐색</div></div>", unsafe_allow_html=True)
-    colL, colR = st.columns([0.38, 0.62], gap="large")
-    with colL:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        kw = st.text_input("지역 입력", key="exp_kw", placeholder="예) 잠실동 / 판교 / 서울 종로구")
-        if st.button("좌표 찾기", use_container_width=True, type="primary"):
-            try:
-                c, lat, lon = resolve_region(kw)
-                st.session_state.region_meta = (kw, c, lat, lon)
-            except Exception as e:
-                st.error(str(e))
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with colR:
-        meta = st.session_state.region_meta
-        if meta:
-            kw, c, lat, lon = meta
-            st.markdown(
-                f"<div class='card'><div class='section-title'>선택 지역</div>"
-                f"<div class='muted'>지역: <b>{kw}</b><br>좌표: {lat}, {lon}<br>cortarNo: {c}</div></div>",
-                unsafe_allow_html=True,
-            )
-            display_map(None, center_lat=lat, center_lon=lon, zoom=14)
-            if st.button("이 지역으로 매물 검색 →", use_container_width=True, type="primary"):
-                st.session_state.page = "search"
-                st.rerun()
-        else:
-            st.info("지역을 입력해보세요.")
+    # ✅ 팀 화면을 여기서 그대로 렌더
+    team_explore.render_team_explore()
 
 
 def render_search():
-    topbar()
+    topbar("부동산 매물 검색")
 
     # back
-    if st.button("← 메인화면으로"):
+    if st.button(" ← 메인으로"):
         st.session_state.page = "lobby"
         st.rerun()
 
