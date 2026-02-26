@@ -8,8 +8,9 @@ def load_subway_data():
     구조: { "1호선": { "서울": (37.55, 126.97), ... }, "2호선": { ... } }
     """
     subway_lines = {}
-    # 현재 파일 위치 기준으로 csv 경로 설정
-    csv_path = os.path.join(os.path.dirname(__file__), 'station_code.csv')
+    # 상위 폴더의 data 폴더 내 csv 경로 설정
+    base_dir = os.path.dirname(__file__)
+    csv_path = os.path.abspath(os.path.join(base_dir, '../../data/station_code.csv'))
     
     if not os.path.exists(csv_path):
         print(f"Warning: {csv_path} 파일을 찾을 수 없습니다.")

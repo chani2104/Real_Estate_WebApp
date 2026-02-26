@@ -8,6 +8,13 @@ import plotly.express as px
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+import sys
+import os
+
+# 현재 디렉토리를 path에 추가하여 로컬 모듈 로드 보장
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 import scraper
 from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong, haversine_distance, estimate_walking_minutes, price_bucket
