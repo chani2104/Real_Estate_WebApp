@@ -12,6 +12,7 @@ from streamlit_folium import st_folium
 import scraper
 from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong, haversine_distance, estimate_walking_minutes
 from subway_data import SUBWAY_LINES
+from map_view import render_region_map
 
 # ----------------------------
 # 0) 스타일: 노랑빛 UI
@@ -115,6 +116,8 @@ if "selected_atclNo" not in st.session_state:
     st.session_state["selected_atclNo"] = None  # 상세보기 대상 매물ID
 if "latest_df" not in st.session_state:
     st.session_state["latest_df"] = None
+if "region_info" not in st.session_state:
+    st.session_state["region_info"] = None
 
 
 # ----------------------------
@@ -202,6 +205,14 @@ if run:
             st.warning("해당 지역에서 매물이 0건으로 나왔어요.")
             st.stop()
 
+        # ✅ 지역 정보(지도용) 세션에 저장
+        st.session_state["region_info"] = {
+            "lat": lat,
+            "lon": lon,
+            "zoom": 13,
+            "keyword": keyword,
+        }
+
         # ✅ items(list[dict]) -> DF (TABLE_COLUMNS 기반 정제)
         df = items_to_dataframe(items)
 
@@ -288,13 +299,43 @@ if run:
 
 
 # ----------------------------
-# 6) 화면 렌더: 목록(건물명) → 클릭 → 상세
+# 6) 화면 렌더: 지도 + 목록(건물명) → 클릭 → 상세
 # ----------------------------
 df = st.session_state.get("latest_df")
+region_info = st.session_state.get("region_info")
 
 if df is None or len(df) == 0:
     st.info("왼쪽에서 지역을 입력하고 검색을 눌러주세요.")
     st.stop()
+
+# 검색이 성공했고 region_info 가 있다면 상단에 지도 먼저 렌더
+if region_info:
+    with st.expander("지도 오버레이(주변 학교)", expanded=False):
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+        show_elem = c1.checkbox("초", value=False)
+        show_mid = c2.checkbox("중", value=False)
+        show_high = c3.checkbox("고", value=False)
+        radius_m = c4.slider("반경(m)", 500, 5000, 2000, 500)
+
+        enabled = show_elem or show_mid or show_high
+        levels = []
+        if show_elem:
+            levels.append("초")
+        if show_mid:
+            levels.append("중")
+        if show_high:
+            levels.append("고")
+
+        school_overlay = {
+            "enabled": enabled,
+            "levels": levels,
+            "radius_m": int(radius_m),
+            "limit": 200,
+        }
+
+    # df 안에 위도/경도 컬럼이 있을 경우, 지도에 매물 마커까지 함께 표시
+    render_region_map(region_info, listings_df=df, school_overlay=school_overlay)
+    st.markdown("---")
 
 # 색상 요구사항: 5,000만 미만=빨강 / 5,000만~5억=초록 / 5억 초과=파랑
 color_map = {
