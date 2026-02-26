@@ -150,7 +150,7 @@ def resolve_region(keyword: str):
 # =========================================================
 # 3) 지도 렌더링 함수 (Folium)
 # =========================================================
-def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, walking_limit=10, school_overlay=None):
+def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, walking_limit=10, school_overlay=None, selected_id=None):
     if df is None or df.empty:
         # 매물이 없더라도 중심점이 있으면 지도 표시
         if center_lat is None or center_lon is None:
@@ -180,15 +180,15 @@ def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, wa
             radius_m = int(school_overlay.get("radius_m", 2000))
             levels = school_overlay.get("levels") or ["초", "중", "고"]
             schools = fetch_nearby_schools_osm(center_lat, center_lon, radius_m)
-            sch_color_map = {"초": "#2ca25f", "중": "#ff7f00", "고": "#de2d26", "기타": "#6a51a3"}
+            # folium.Icon의 color는 정해진 색상 이름만 지원하므로 맵핑 변경
+            sch_color_map = {"초": "green", "중": "orange", "고": "red", "기타": "purple"}
 
             for s in schools:
                 if s.get("level") not in levels: continue
-                folium.CircleMarker(
+                folium.Marker(
                     location=[float(s["lat"]), float(s["lon"])],
-                    radius=6, color=sch_color_map.get(s["level"], "#6a51a3"),
-                    fill=True, fill_opacity=0.9,
-                    tooltip=f"[{s['level']}] {s['name']}"
+                    tooltip=f"[{s['level']}] {s['name']}",
+                    icon=folium.Icon(color=sch_color_map.get(s["level"], "purple"), icon="graduation-cap", prefix="fa")
                 ).add_to(m)
         except: pass
 
@@ -207,7 +207,9 @@ def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, wa
             lat, lon = pd.to_numeric(row["위도"]), pd.to_numeric(row["경도"])
             if pd.isna(lat) or pd.isna(lon): continue
             
-            icon_name = "building" if "아파트" in str(row["매물유형"]) else "home"
+            is_selected = (selected_id is not None and str(row["매물ID"]) == str(selected_id))
+            icon_name = "star" if is_selected else ("building" if "아파트" in str(row["매물유형"]) else "home")
+            
             folium.Marker(
                 [lat, lon],
                 tooltip=f"[{row['매물유형']}] {row['단지/건물명']}",
@@ -430,8 +432,9 @@ def render_search():
             st.markdown(f"<div class='card'><h4>📌 상세: {row['단지/건물명']}</h4>", unsafe_allow_html=True)
             
             curr_stns = SUBWAY_LINES.get(ctl["subway_line"]) if ctl.get("subway_line") != "선택 안 함" else None
-            display_map(df[df["매물ID"]==sel], center_lat=row["위도"], center_lon=row["경도"], zoom=16, 
-                        stations=curr_stns, walking_limit=ctl.get("w_time", 10), school_overlay=school_overlay)
+            display_map(df, center_lat=row["위도"], center_lon=row["경도"], zoom=16, 
+                        stations=curr_stns, walking_limit=ctl.get("w_time", 10), 
+                        school_overlay=school_overlay, selected_id=sel)
             
             kv_grid({
                 "가격": row["가격"], "유형": f"{row['매물유형']}/{row['거래유형']}", 
