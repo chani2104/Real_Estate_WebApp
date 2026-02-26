@@ -111,97 +111,131 @@ if selected_sido != "전국":
     view_df = view_df[view_df['sidoNm'] == selected_sido]
 
 weights_sum = w_subway + w_school + w_hospital + w_culture + w_mall
-if weights_sum > 0:
-    edu_norm_score = (view_df.get('norm_school', 0) + view_df.get('norm_academy', 0)) / 2
-    infra_score = (
-        (view_df.get('norm_subway', 0) * w_subway) +
-        (edu_norm_score * w_school) +
-        (view_df.get('norm_hospital', 0) * w_hospital) +
-        (view_df.get('norm_culture', 0) * w_culture) +
-        (view_df.get('norm_department', 0) * w_mall)
-    )
-    view_df['custom_score'] = (infra_score / weights_sum * 100).round(1)
-else:
-    view_df['custom_score'] = 0.0
+
+# 테마별 점수 계산 함수
+def calculate_custom_scores(target_df, current_theme):
+    # 원본 데이터 보존을 위해 복사본 생성
+    res_df = target_df.copy()
+    
+    # 1. 인프라 점수 계산
+    if current_theme == "인프라":
+        if weights_sum > 0:
+            edu_norm_score = (res_df.get('norm_school', 0) + res_df.get('norm_academy', 0)) / 2
+            infra_score = (
+                (res_df.get('norm_subway', 0) * w_subway) +
+                (edu_norm_score * w_school) +
+                (res_df.get('norm_hospital', 0) * w_hospital) +
+                (res_df.get('norm_culture', 0) * w_culture) +
+                (res_df.get('norm_department', 0) * w_mall)
+            )
+            res_df['custom_score'] = (infra_score / weights_sum * 100).round(1)
+        else:
+            res_df['custom_score'] = 0.0
+            
+    # 2. 전세 가성비 점수 계산 (저렴할수록 높은 점수)
+    elif current_theme == "전세":
+        # 0보다 큰 유효 데이터만 추출
+        valid_mask = res_df['전세_평균보증금'] > 0
+        valid_df = res_df[valid_mask]
+        
+        if not valid_df.empty:
+            max_deposit = valid_df['전세_평균보증금'].max()
+            # lambda x에서 .round(1) 대신 round(x, 1) 사용
+            res_df['custom_score'] = res_df['전세_평균보증금'].apply(
+                lambda x: round((1 - (x / max_deposit)) * 100, 1) if x > 0 else -1.0
+            )
+        else:
+            res_df['custom_score'] = -1.0
+            
+    # 3. 월세 가성비 점수 계산 (저렴할수록 높은 점수)
+    else:  # 월세
+        valid_mask = res_df['월세_평균월세'] > 0
+        valid_df = res_df[valid_mask]
+        
+        if not valid_df.empty:
+            max_monthly = valid_df['월세_평균월세'].max()
+            # lambda x에서 .round(1) 대신 round(x, 1) 사용
+            res_df['custom_score'] = res_df['월세_평균월세'].apply(
+                lambda x: round((1 - (x / max_monthly)) * 100, 1) if x > 0 else -1.0
+            )
+        else:
+            res_df['custom_score'] = -1.0
+            
+    return res_df
 
 # ==========================================================
-# 상단: 이사 지역 가이드
+# 상단 레이아웃 설정
 # ==========================================================
 st.title(f"🏘️ {selected_sido} 맞춤형 이사 지역 가이드")
 
 col1, col2 = st.columns([0.6, 0.4], gap="large")
-highlight_codes = set()
 
+# --- col2: 데이터 분석 및 리스트 출력 ---
 with col2:
-    # 1. 제목 및 테마 선택 UI (전국/지역 공통)
     header_title = "📊 전국 추천 테마 TOP 5" if selected_sido == "전국" else f"🏆 {selected_sido} 항목별 TOP 5"
     st.subheader(header_title)
     
-    theme = st.radio("관심 테마", ["월세", "전세", "인프라"], horizontal=True, key="theme_radio_combined")
+    theme = st.radio("관심 테마", ["월세", "전세", "인프라"], horizontal=True, key="theme_radio_v4")
     
-    # 2. 데이터 필터링 및 정렬 로직 (공통)
+    # [핵심 수정] 선택된 테마에 맞춰 view_df 자체를 업데이트 (KeyError 방지)
+    view_df = calculate_custom_scores(view_df, theme)
+    
+    # 마커 색상 및 정렬 기준 설정
+    marker_color = "#3186cc" # 기본색
     if theme == "월세":
         target_df = view_df[view_df['월세_평균월세'] > 0].sort_values('월세_평균월세', ascending=True).head(5)
-        metric_col, theme_title = "월세_평균월세", "💰 월세가 저렴한 지역"
+        theme_title, marker_color, metric_col = "💰 월세가 저렴한 지역 TOP 5", "green", "월세_평균월세"
     elif theme == "전세":
         target_df = view_df[view_df['전세_평균보증금'] > 0].sort_values('전세_평균보증금', ascending=True).head(5)
-        metric_col, theme_title = "전세_평균보증금", "🏠 전세가 저렴한 지역"
-    else: # 인프라
+        theme_title, marker_color, metric_col = "🏠 전세가 저렴한 지역 TOP 5", "blue", "전세_평균보증금"
+    else:  # 인프라
         target_df = view_df.sort_values('custom_score', ascending=False).head(5)
-        metric_col, theme_title = "custom_score", "✨ 인프라 만족도 상위"
+        theme_title, marker_color, metric_col = "✨ 인프라 만족도 상위 TOP 5", "crimson", "custom_score"
 
     st.write(f"#### {theme_title}")
     highlight_codes = set(target_df['sggCd_key'])
 
-    # 3. 리스트 출력 로직
+    # 리스트 출력
     if target_df.empty:
-        st.info("해당 조건의 데이터가 없습니다.")
+        st.info("조건에 맞는 데이터가 없습니다.")
     else:
-       for i, (idx, data) in enumerate(target_df.iterrows()):
+        for i, (idx, data) in enumerate(target_df.iterrows()):
             r_col1, r_col2 = st.columns([0.8, 0.2])
-            
-            # 특정 지역(시도)을 선택했을 때는 상세 정보(expander)를 포함하여 출력
-            if selected_sido != "전국":
-                with r_col1:
-                    # 제목에서 점수를 빼고 지역명만 노출
+            with r_col1:
+                if selected_sido != "전국":
                     with st.expander(f"**{i+1}위: {data['full_region']}**"):
                         st.markdown(f"🏠 **평균 전세**: {format_price(data['전세_평균보증금'])}")
                         st.markdown(f"💰 **평균 월세**: {format_price(data['월세_평균월세'])}")
-                        # 요청하신 인프라 점수 항목 추가
                         st.markdown(f"✨ **인프라 점수**: {data['custom_score']:.1f}점")
-            
-            # 전국 모드일 때 보여줄 기본 텍스트 라인
-            else:
-                val = f"{data[metric_col]:.1f}점" if metric_col == "custom_score" else format_price(data[metric_col])
-                r_col1.markdown(f"**{i+1}위. {data['full_region']}** : {val}")
+                else:
+                    val = f"{data[metric_col]:.1f}점" if metric_col == "custom_score" else format_price(data[metric_col])
+                    st.markdown(f"**{i+1}위. {data['full_region']}** : {val}")
 
-            # 🔍 지도 이동 버튼 (공통)
-            if r_col2.button("🔍", key=f"btn_map_nav_{data['sggCd_key']}", use_container_width=True):
+            if r_col2.button("🔍", key=f"btn_nav_{data['sggCd_key']}", use_container_width=True):
                 st.session_state.map_center = [data['위도'], data['경도']]
-                st.session_state.map_zoom = 13 if selected_sido != "전국" else 12
+                st.session_state.map_zoom = 13 if selected_sido != "전국" else 11
                 st.rerun()
 
+# --- col1: 지도 출력 ---
 with col1:
-    st.subheader("📍 인터랙티브 지도")
-    if st.button("지도 초기화", use_container_width=True):
-        if not view_df.empty:
-            st.session_state.map_center = [view_df['위도'].mean(), view_df['경도'].mean()]
-            st.session_state.map_zoom = 7 if selected_sido == "전국" else 10
-        st.rerun()
-
+    st.subheader("📍 지역별 만족도 지도")
     m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
-    
+
     for _, row in view_df.iterrows():
-        popup_html = f"<b>{row['full_region']}</b><br>점수: {row['custom_score']:.1f}"
+        # 이제 view_df에는 무조건 custom_score 컬럼이 존재합니다.
+        is_highlight = row['sggCd_key'] in highlight_codes
+        popup_html = f"<b>{row['full_region']}</b><br>테마 점수: {row['custom_score']:.1f}"
+        
         folium.CircleMarker(
             location=[row['위도'], row['경도']],
-            radius=8 if row['sggCd_key'] in highlight_codes else 4,
+            radius=10 if is_highlight else 5,
             popup=folium.Popup(popup_html, max_width=300),
-            color='crimson' if row['sggCd_key'] in highlight_codes else '#3186cc',
-            fill=True, fill_color='crimson' if row['sggCd_key'] in highlight_codes else '#3186cc',
-            fill_opacity=0.8 if row['sggCd_key'] in highlight_codes else 0.5,
-            weight=3 if row['sggCd_key'] in highlight_codes else 1
+            color=marker_color if is_highlight else "#3186cc",
+            fill=True,
+            fill_opacity=0.7 if is_highlight else 0.4,
+            weight=2 if is_highlight else 1
         ).add_to(m)
+
     st_folium(m, width="100%", height=500, key="main_map")
 
 
