@@ -12,7 +12,7 @@ from streamlit_folium import st_folium
 import scraper
 from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong, haversine_distance, estimate_walking_minutes
 from subway_data import SUBWAY_LINES
-from map_view import render_region_map
+from poi_schools import fetch_nearby_schools_osm
 
 # ----------------------------
 # 0) 스타일: 노랑빛 UI
@@ -308,34 +308,26 @@ if df is None or len(df) == 0:
     st.info("왼쪽에서 지역을 입력하고 검색을 눌러주세요.")
     st.stop()
 
-# 검색이 성공했고 region_info 가 있다면 상단에 지도 먼저 렌더
-if region_info:
-    with st.expander("지도 오버레이(주변 학교)", expanded=False):
-        c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-        show_elem = c1.checkbox("초", value=False)
-        show_mid = c2.checkbox("중", value=False)
-        show_high = c3.checkbox("고", value=False)
-        radius_m = c4.slider("반경(m)", 500, 5000, 2000, 500)
+# --- 학교 오버레이 옵션 UI (상단에 배치) ---
+with st.expander("🏫 지도 오버레이 (주변 학교 설정)", expanded=False):
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    show_elem = c1.checkbox("초등학교", value=False, key="show_elem")
+    show_mid = c2.checkbox("중학교", value=False, key="show_mid")
+    show_high = c3.checkbox("고등학교", value=False, key="show_high")
+    radius_m = c4.slider("검색 반경(m)", 500, 5000, 2000, 500, key="radius_m")
 
-        enabled = show_elem or show_mid or show_high
-        levels = []
-        if show_elem:
-            levels.append("초")
-        if show_mid:
-            levels.append("중")
-        if show_high:
-            levels.append("고")
+    enabled = show_elem or show_mid or show_high
+    levels = []
+    if show_elem: levels.append("초")
+    if show_mid: levels.append("중")
+    if show_high: levels.append("고")
 
-        school_overlay = {
-            "enabled": enabled,
-            "levels": levels,
-            "radius_m": int(radius_m),
-            "limit": 200,
-        }
-
-    # df 안에 위도/경도 컬럼이 있을 경우, 지도에 매물 마커까지 함께 표시
-    render_region_map(region_info, listings_df=df, school_overlay=school_overlay)
-    st.markdown("---")
+    school_overlay = {
+        "enabled": enabled,
+        "levels": levels,
+        "radius_m": int(radius_m),
+        "limit": 200,
+    }
 
 # 색상 요구사항: 5,000만 미만=빨강 / 5,000만~5억=초록 / 5억 초과=파랑
 color_map = {
@@ -348,7 +340,7 @@ color_map = {
 # ----------------------------
 # 6) 지도 렌더링 함수 (Folium)
 # ----------------------------
-def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, walking_limit=10):
+def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, walking_limit=10, school_overlay=None):
     if df is None or df.empty:
         return
 
@@ -390,6 +382,43 @@ def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, wa
 
     # 레이어 컨트롤 추가
     folium.LayerControl().add_to(m)
+
+    # ✅ 주변 학교 오버레이(선택 기능)
+    if school_overlay and school_overlay.get("enabled"):
+        try:
+            radius_m = int(school_overlay.get("radius_m", 2000))
+            levels = school_overlay.get("levels") or ["초", "중", "고"]
+            limit = int(school_overlay.get("limit", 200))
+            
+            # center_lat, center_lon 기준으로 학교 검색
+            schools = fetch_nearby_schools_osm(center_lat, center_lon, radius_m, limit=limit)
+
+            # 색상 매핑: 초/중/고/기타
+            sch_color_map = {"초": "#2ca25f", "중": "#ff7f00", "고": "#de2d26", "기타": "#6a51a3"}
+
+            for s in schools:
+                level = str(s.get("level", "기타"))
+                if level not in levels:
+                    continue
+                try:
+                    s_lat = float(s["lat"])
+                    s_lon = float(s["lon"])
+                except Exception:
+                    continue
+                name = str(s.get("name", "") or "")
+                color = sch_color_map.get(level, "#6a51a3")
+
+                folium.CircleMarker(
+                    location=[s_lat, s_lon],
+                    radius=6,
+                    color=color,
+                    fill=True,
+                    fill_color=color,
+                    fill_opacity=0.9,
+                    tooltip=f"[{level}] {name}" if name else f"[{level}] 학교",
+                ).add_to(m)
+        except Exception:
+            pass
 
     # ✅ 지하철역 및 반경 원 추가
     if stations:
@@ -475,7 +504,14 @@ if st.session_state["selected_atclNo"]:
 
     # ✅ 상세 지도 (해당 매물 중심)
     w_limit = st.session_state.get("walking_time_limit_val", 10)
-    display_map(df[df["매물ID"] == str(atcl_no)], center_lat=r.get("위도"), center_lon=r.get("경도"), zoom=16, walking_limit=w_limit)
+    display_map(
+        df[df["매물ID"] == str(atcl_no)], 
+        center_lat=r.get("위도"), 
+        center_lon=r.get("경도"), 
+        zoom=16, 
+        walking_limit=w_limit,
+        school_overlay=school_overlay
+    )
 
     c1, c2, c3 = st.columns(3)
     c1.metric("거래유형", r.get("거래유형", ""))
@@ -514,7 +550,7 @@ selected_subway = st.session_state.get("subway_line", "선택 안 함")
 # ✅ 전체 지도 표시
 curr_stations = SUBWAY_LINES.get(selected_subway) if selected_subway != "선택 안 함" else None
 w_limit = st.session_state.get("walking_time_limit_val", 10)
-display_map(df, stations=curr_stations, walking_limit=w_limit)
+display_map(df, stations=curr_stations, walking_limit=w_limit, school_overlay=school_overlay)
 
 # “건물 이름만” 목록처럼 보이게 카드형 리스트 + 버튼으로 클릭 구현
 for _, r in df.iterrows():
