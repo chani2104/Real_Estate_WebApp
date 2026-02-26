@@ -36,8 +36,8 @@ TABLE_COLUMNS = [
     ("directTradYn", "직거래"),
     ("atclCfmYmd", "확인일"),
     ("atclFetrDesc", "특징"),
-    ("lat", "lat"),
-    ("lng", "lng"),
+    ("lat", "위도"),
+    ("lng", "경도"),
 ]
 
 

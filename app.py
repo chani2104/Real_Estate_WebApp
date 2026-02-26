@@ -211,19 +211,19 @@ if run:
         df["가격(만원)"] = df["가격"].apply(parse_price_to_manwon)
         df["면적(㎡)"] = pd.to_numeric(df["면적(㎡)"], errors="coerce")
         df["면적(평)"] = df["면적(㎡)"].apply(sqm_to_pyeong)
-        df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
-        df["lng"] = pd.to_numeric(df["lng"], errors="coerce")
+        df["위도"] = pd.to_numeric(df["위도"], errors="coerce")
+        df["경도"] = pd.to_numeric(df["경도"], errors="coerce")
 
         # 🚉 지하철 거리 필터 로직
         if subway_line != "선택 안 함":
             stations = SUBWAY_LINES[subway_line]
             
             def get_min_walking_time(row):
-                if pd.isna(row["lat"]) or pd.isna(row["lng"]):
+                if pd.isna(row["위도"]) or pd.isna(row["경도"]):
                     return 999
                 min_time = 999
                 for s_name, (s_lat, s_lon) in stations.items():
-                    dist = haversine_distance(row["lat"], row["lng"], s_lat, s_lon)
+                    dist = haversine_distance(row["위도"], row["경도"], s_lat, s_lon)
                     w_time = estimate_walking_minutes(dist)
                     if w_time < min_time:
                         min_time = w_time
@@ -313,8 +313,8 @@ def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, wa
 
     # 중심점 설정
     if center_lat is None or center_lon is None:
-        center_lat = df["lat"].mean()
-        center_lon = df["lng"].mean()
+        center_lat = df["위도"].mean()
+        center_lon = df["경도"].mean()
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles=None)
 
@@ -376,7 +376,7 @@ def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, wa
 
     # 매물 마커 추가
     for _, row in df.iterrows():
-        if pd.isna(row["lat"]) or pd.isna(row["lng"]):
+        if pd.isna(row["위도"]) or pd.isna(row["경도"]):
             continue
         
         popup_html = f"""
@@ -406,7 +406,7 @@ def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, wa
             icon_name = "info-circle"
         
         folium.Marker(
-            [row["lat"], row["lng"]],
+            [row["위도"], row["경도"]],
             popup=folium.Popup(popup_html, max_width=300),
             tooltip=f"[{rlet_type}] {row['단지/건물명']}",
             icon=folium.Icon(color=color, icon=icon_name, prefix="fa")
@@ -434,7 +434,7 @@ if st.session_state["selected_atclNo"]:
 
     # ✅ 상세 지도 (해당 매물 중심)
     w_limit = st.session_state.get("walking_time_limit_val", 10)
-    display_map(df[df["매물ID"] == str(atcl_no)], center_lat=r.get("lat"), center_lon=r.get("lng"), zoom=16, walking_limit=w_limit)
+    display_map(df[df["매물ID"] == str(atcl_no)], center_lat=r.get("위도"), center_lon=r.get("경도"), zoom=16, walking_limit=w_limit)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("거래유형", r.get("거래유형", ""))
