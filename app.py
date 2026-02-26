@@ -10,47 +10,93 @@ import folium
 from streamlit_folium import st_folium
 
 import scraper
-from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong, haversine_distance, estimate_walking_minutes
+from utils import items_to_dataframe, parse_price_to_manwon, sqm_to_pyeong, haversine_distance, estimate_walking_minutes, price_bucket
 from subway_data import SUBWAY_LINES
 from poi_schools import fetch_nearby_schools_osm
 
-# ----------------------------
-# 0) 스타일: 노랑빛 UI
-# ----------------------------
-st.set_page_config(page_title="부동산 매물 검색 대시보드", layout="wide")
+# =========================================================
+# 0) 페이지 설정 + 스타일(노랑톤 + 부드러운 폰트 + 상단 흰바 숨김)
+# =========================================================
+st.set_page_config(page_title="부동산 웹앱", layout="wide", initial_sidebar_state="expanded")
+
 st.markdown(
     """
     <style>
-      .stApp { background: #FFF8D6; }
-      [data-testid="stSidebar"] { background: #FFF2B3; }
-      h1, h2, h3 { color: #3b2f00; }
-      .block-container { padding-top: 1.3rem; }
-      div[data-testid="stMetric"] {
-        background: #fff;
-        border-radius: 14px;
-        padding: 10px;
-        border: 1px solid #f0d46b;
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap');
+
+      html, body, [class*="css"]  {
+        font-family: "Nunito", "Noto Sans KR", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       }
+
+      /* Streamlit 기본 헤더/푸터/상단 툴바 숨기기 */
+      header { visibility: hidden; height: 0px; }
+      footer { visibility: hidden; height: 0px; }
+      [data-testid="stToolbar"] { display: none; }
+
+      /* 전체 배경/사이드바 */
+      .stApp { background: #FFF7D1; }
+      [data-testid="stSidebar"] { background: #FFF0A8; }
+
+      /* 기본 여백 */
+      .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
+
+      /* 카드 */
       .card {
-        background: #ffffff;
-        border: 1px solid #f0d46b;
-        border-radius: 14px;
-        padding: 14px;
+        background: rgba(255,255,255,0.92);
+        border: 1px solid #F0D36A;
+        border-radius: 18px;
+        padding: 16px 16px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.04);
         margin-bottom: 10px;
       }
-      .small { color:#6b5b00; font-size: 0.95rem; }
+      .muted { color: #6b5b00; font-size: 0.95rem; }
+
+      /* 배지 */
+      .badge {
+        display:inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid #F0D36A;
+        background: #FFF6C8;
+        font-size: 0.85rem;
+        margin-right: 6px;
+        margin-bottom: 6px;
+      }
+
+      /* 섹션 타이틀 */
+      .section-title { font-weight: 800; font-size: 1.25rem; color: #3b2f00; margin: 0 0 10px 0;}
+
+      /* 버튼/입력 라운드 */
+      .stButton>button { border-radius: 14px; }
+      input, textarea { border-radius: 12px !important; }
+
+      /* 구분선 */
+      .sep { border:none; border-top:1px solid #f5e4a3; margin:12px 0; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("🏠 네이버 부동산 매물 검색")
-st.caption("지역을 검색하고, 거래유형/매물유형/면적(평)/예산으로 필터링한 뒤 목록에서 클릭해 상세를 볼 수 있어요.")
+
+# =========================================================
+# 1) 세션 상태
+# =========================================================
+if "page" not in st.session_state:
+    st.session_state.page = "lobby"  # lobby | explore | search
+
+if "df" not in st.session_state:
+    st.session_state.df = None
+
+if "selected_id" not in st.session_state:
+    st.session_state.selected_id = None
+
+if "region_meta" not in st.session_state:
+    st.session_state.region_meta = None  # (keyword, cortarNo, lat, lon)
 
 
-# ----------------------------
-# 1) 지역명 입력 → (cortarNo, lat, lon) 추출
-# ----------------------------
+# =========================================================
+# 2) 지역명 -> (cortarNo, lat, lon) 자동 추출
+# =========================================================
 def _mobile_headers():
     return {
         "User-Agent": (
@@ -65,8 +111,7 @@ def _mobile_headers():
 
 def resolve_region(keyword: str):
     """
-    m.land 검색 결과로 이동한 뒤,
-    최종 URL/HTML에서 cortarNo, lat, lon을 최대한 자동으로 뽑는다.
+    m.land 검색 페이지를 열고 URL/HTML에서 cortarNo, lat, lon 추출
     """
     keyword = (keyword or "").strip()
     if not keyword:
@@ -89,542 +134,326 @@ def resolve_region(keyword: str):
     lon = pick("lon")
 
     if cortar_no and lat and lon:
-        return str(cortar_no), float(lat), float(lon), final_url
+        return str(cortar_no), float(lat), float(lon)
 
     html = resp.text
     m_c = re.search(r'cortarNo["\']?\s*[:=]\s*["\']?(\d+)', html)
     m_lat = re.search(r'lat["\']?\s*[:=]\s*["\']?([0-9.]+)', html)
     m_lon = re.search(r'lon["\']?\s*[:=]\s*["\']?([0-9.]+)', html)
+
     if m_c and m_lat and m_lon:
-        return m_c.group(1), float(m_lat.group(1)), float(m_lon.group(1)), final_url
+        return m_c.group(1), float(m_lat.group(1)), float(m_lon.group(1))
 
-    raise RuntimeError("지역 좌표/코드를 자동으로 찾지 못했어요. 더 구체적으로 입력해보세요.")
-
-
-# ----------------------------
-# 2) 필터 옵션 후보(응답 데이터 기반으로 동적 생성)
-# ----------------------------
-def unique_non_empty(series: pd.Series):
-    vals = sorted({str(v).strip() for v in series.dropna().tolist() if str(v).strip()})
-    return vals
+    raise RuntimeError("지역 좌표/코드를 찾지 못했어요. 더 구체적으로 입력해보세요.")
 
 
-# ----------------------------
-# 3) 페이지 상태(목록/상세 전환)
-# ----------------------------
-if "selected_atclNo" not in st.session_state:
-    st.session_state["selected_atclNo"] = None  # 상세보기 대상 매물ID
-if "latest_df" not in st.session_state:
-    st.session_state["latest_df"] = None
-if "region_info" not in st.session_state:
-    st.session_state["region_info"] = None
-
-
-# ----------------------------
-# 4) 사이드바: 검색 + 필터
-# ----------------------------
-with st.sidebar:
-    st.subheader("지역 검색")
-    keyword = st.text_input("지역 입력", placeholder="예) 서울 종로구 / 잠실동 / 판교")
-    limit = st.slider("가져올 개수", 10, 50, 50, 10)
-
-    st.divider()
-    st.subheader("필터")
-
-    # 거래유형 필터 (요구사항: 전세/월세/매매)
-    trad_selected = st.multiselect(
-        "거래유형",
-        options=["매매", "전세", "월세"],
-        default=["매매", "전세", "월세"],
-        help="네이버 응답의 '거래유형(tradTpNm)'를 기준으로 필터링합니다.",
-    )
-
-    # 매물유형 필터 (요구사항: 아파트/오피스텔/상가주택/단독/다가구/빌라/다세대 등)
-    # 실제로 어떤 값이 오는지는 지역마다 달라서, 기본 후보를 주고, 수집 후 실제 값으로 자동 보정도 함
-    rlet_default_options = ["아파트", "오피스텔", "상가주택", "단독/다가구", "빌라", "다세대"]
-    rlet_selected = st.multiselect(
-        "매물유형",
-        options=rlet_default_options,
-        default=rlet_default_options,
-        help="네이버 응답의 '매물유형(rletTpNm)'을 기준으로 필터링합니다.",
-    )
-
-    # 면적(평) 필터: 수집 후 df 범위를 보고 자동으로 슬라이더 범위를 맞추는 게 베스트라
-    # 일단 기본값으로 잡아두고, 아래에서 df 있으면 재계산
-    min_py = st.number_input("최소 면적(평)", min_value=0.0, value=0.0, step=1.0)
-    max_py = st.number_input("최대 면적(평)", min_value=0.0, value=200.0, step=1.0)
-
-    # 예산 입력(만원 단위): 사용자가 5억이면 50000 입력하는 방식은 불편하니까,
-    # UI에서는 '원 단위 느낌'으로 억/만을 받아서 내부에서 만원으로 변환
-    st.markdown("**예산(상한)**")
-    budget_eok = st.number_input("억(예: 5억이면 5)", min_value=0, value=0, step=1)
-    budget_man = st.number_input("만원(예: 5억 3,000이면 3000)", min_value=0, value=0, step=100)
-    budget_limit_manwon = budget_eok * 10000 + budget_man  # ✅ 만원 단위로 환산
-
-    st.caption("예산을 0으로 두면 예산 필터를 적용하지 않습니다.")
-
-    # 🚉 지하철 필터 추가
-    st.divider()
-    st.subheader("🚉 지하철 필터")
-    subway_line = st.selectbox("지하철 노선 선택", options=["선택 안 함"] + list(SUBWAY_LINES.keys()), key="subway_line")
-    
-    walking_time_limit = 30
-    if subway_line != "선택 안 함":
-        walking_time_limit = st.slider("최대 도보 시간 (분)", 5, 30, 10, 5, key="walking_time_limit_val")
-
-    st.divider()
-    run = st.button("검색 실행", type="primary", width="stretch")
-
-
-# ----------------------------
-# 5) 검색 실행: 수집 → DF 생성 → 파생컬럼 생성 → 필터 적용 → 저장
-# ----------------------------
-if run:
-    st.session_state["selected_atclNo"] = None  # 새 검색이면 상세 선택 초기화
-
-    try:
-        with st.spinner("지역 코드/좌표 찾는 중..."):
-            cortar_no, lat, lon, debug_url = resolve_region(keyword)
-
-        prog = st.progress(0, text="매물 수집 준비...")
-        def progress_cb(cur, total, msg):
-            ratio = 0 if total == 0 else min(cur / total, 1.0)
-            prog.progress(ratio, text=msg)
-
-        with st.spinner("네이버에서 매물 수집 중..."):
-            items = scraper.scrape_articles(
-                cortar_no=cortar_no,
-                lat=lat,
-                lon=lon,
-                limit=int(limit),
-                progress_callback=progress_cb,
-            )
-        prog.empty()
-
-        if not items:
-            st.warning("해당 지역에서 매물이 0건으로 나왔어요.")
-            st.stop()
-
-        # ✅ 지역 정보(지도용) 세션에 저장
-        st.session_state["region_info"] = {
-            "lat": lat,
-            "lon": lon,
-            "zoom": 13,
-            "keyword": keyword,
-        }
-
-        # ✅ items(list[dict]) -> DF (TABLE_COLUMNS 기반 정제)
-        df = items_to_dataframe(items)
-
-        # ✅ 파생컬럼 생성
-        # - 가격(만원): 그래프/예산필터용
-        # - 면적(평): 요구사항
-        df["가격(만원)"] = df["가격"].apply(parse_price_to_manwon)
-        df["면적(㎡)"] = pd.to_numeric(df["면적(㎡)"], errors="coerce")
-        df["면적(평)"] = df["면적(㎡)"].apply(sqm_to_pyeong)
-        df["위도"] = pd.to_numeric(df["위도"], errors="coerce")
-        df["경도"] = pd.to_numeric(df["경도"], errors="coerce")
-
-        # 🚉 지하철 거리 필터 로직
-        if subway_line != "선택 안 함":
-            stations = SUBWAY_LINES[subway_line]
-            
-            def get_min_walking_time(row):
-                if pd.isna(row["위도"]) or pd.isna(row["경도"]):
-                    return 999
-                min_time = 999
-                for s_name, (s_lat, s_lon) in stations.items():
-                    dist = haversine_distance(row["위도"], row["경도"], s_lat, s_lon)
-                    w_time = estimate_walking_minutes(dist)
-                    if w_time < min_time:
-                        min_time = w_time
-                return min_time
-
-            df["도보시간(분)"] = df.apply(get_min_walking_time, axis=1)
-            df = df[df["도보시간(분)"] <= walking_time_limit]
-
-        # ✅ 가격구간(요구사항: 5,000만 미만 / 5,000만~5억 / 5억 초과)
-        def price_bucket(x):
-            if pd.isna(x):
-                return "가격정보없음"
-            if x < 5000:
-                return "5,000만 미만"
-            if x <= 50000:
-                return "5,000만 ~ 5억"
-            return "5억 초과"
-
-        df["가격구간"] = df["가격(만원)"].apply(price_bucket)
-
-        # ✅ “실제 응답에 존재하는 매물유형/거래유형”을 수집 후 알 수 있으므로
-        #    필요하면 사용자 선택값과 실제 값을 교집합으로 적용
-        # (ex: 응답에 '다세대'가 없으면 자동으로 무시)
-        real_trad = set(unique_non_empty(df["거래유형"]))
-        real_rlet = set(unique_non_empty(df["매물유형"]))
-
-        trad_selected_eff = [t for t in trad_selected if t in real_trad] or list(real_trad)
-        rlet_selected_eff = [r for r in rlet_selected if r in real_rlet] or list(real_rlet)
-
-        # ✅ 필터 적용
-        fdf = df.copy()
-
-        # 1) 거래유형
-        fdf = fdf[fdf["거래유형"].isin(trad_selected_eff)]
-
-        # 2) 매물유형
-        fdf = fdf[fdf["매물유형"].isin(rlet_selected_eff)]
-
-        # 3) 면적(평) 범위
-        fdf = fdf[(fdf["면적(평)"].isna()) | ((fdf["면적(평)"] >= min_py) & (fdf["면적(평)"] <= max_py))]
-
-        # 4) 예산(상한) 필터 (0이면 적용 안 함)
-        if budget_limit_manwon > 0:
-            fdf = fdf[(fdf["가격(만원)"].isna()) | (fdf["가격(만원)"] <= budget_limit_manwon)]
-
-        # ✅ 정렬: 기본은 가격(만원) 오름/내림은 “가격이 숫자인 것”이 더 앞으로 오게
-        fdf = fdf.sort_values(by="가격(만원)", ascending=False, na_position="last").reset_index(drop=True)
-
-        # ✅ 세션에 저장 (요구사항: DataFrame으로 저장)
-        st.session_state["latest_df"] = fdf
-
-        st.success(f"검색 완료: {len(fdf)}건 (필터 적용 후)")
-
-        with st.expander("디버그(지역 자동추출 정보)", expanded=False):
-            st.write(f"- cortarNo: `{cortar_no}`")
-            st.write(f"- lat/lon: `{lat}`, `{lon}`")
-            st.write(f"- 검색 URL: {debug_url}")
-
-    except Exception as e:
-        st.error(f"에러: {e}")
-        st.stop()
-
-
-# ----------------------------
-# 6) 화면 렌더: 지도 + 목록(건물명) → 클릭 → 상세
-# ----------------------------
-df = st.session_state.get("latest_df")
-region_info = st.session_state.get("region_info")
-
-if df is None or len(df) == 0:
-    st.info("왼쪽에서 지역을 입력하고 검색을 눌러주세요.")
-    st.stop()
-
-# --- 학교 오버레이 옵션 UI (상단에 배치) ---
-with st.expander("🏫 지도 오버레이 (주변 학교 설정)", expanded=False):
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    show_elem = c1.checkbox("초등학교", value=False, key="show_elem")
-    show_mid = c2.checkbox("중학교", value=False, key="show_mid")
-    show_high = c3.checkbox("고등학교", value=False, key="show_high")
-    radius_m = c4.slider("검색 반경(m)", 500, 5000, 2000, 500, key="radius_m")
-
-    enabled = show_elem or show_mid or show_high
-    levels = []
-    if show_elem: levels.append("초")
-    if show_mid: levels.append("중")
-    if show_high: levels.append("고")
-
-    school_overlay = {
-        "enabled": enabled,
-        "levels": levels,
-        "radius_m": int(radius_m),
-        "limit": 200,
-    }
-
-# 색상 요구사항: 5,000만 미만=빨강 / 5,000만~5억=초록 / 5억 초과=파랑
-color_map = {
-    "5,000만 미만": "red",
-    "5,000만 ~ 5억": "green",
-    "5억 초과": "blue",
-    "가격정보없음": "gray",
-}
-
-# ----------------------------
-# 6) 지도 렌더링 함수 (Folium)
-# ----------------------------
+# =========================================================
+# 3) 지도 렌더링 함수 (Folium)
+# =========================================================
 def display_map(df, center_lat=None, center_lon=None, zoom=13, stations=None, walking_limit=10, school_overlay=None):
     if df is None or df.empty:
-        return
-
-    # 중심점 설정
+        # 매물이 없더라도 중심점이 있으면 지도 표시
+        if center_lat is None or center_lon is None:
+            return
+    
     if center_lat is None or center_lon is None:
-        center_lat = df["위도"].mean()
-        center_lon = df["경도"].mean()
+        center_lat = pd.to_numeric(df["위도"], errors="coerce").mean()
+        center_lon = pd.to_numeric(df["경도"], errors="coerce").mean()
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles=None)
 
-    # --- 지도 타일 설정 ---
-    # 1. 기본 지도
+    # 타일 설정
     folium.TileLayer("OpenStreetMap", name="기본 지도", control=True).add_to(m)
-
-    # 2. 구글 위성 지도 추가
     folium.TileLayer(
         tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
         attr="Google",
         name="위성 지도",
         control=True,
-        show=False  # 처음에 숨김
+        show=False
     ).add_to(m)
-
-    # 3. 밝은 배경
-    folium.TileLayer(
-        tiles="CartoDB positron",
-        name="밝은 배경",
-        control=True,
-        show=False  # 처음에 숨김
-    ).add_to(m)
-
-    # 4. 어두운 배경
-    folium.TileLayer(
-        tiles="CartoDB dark_matter",
-        name="어두운 배경",
-        control=True,
-        show=False  # 처음에 숨김
-    ).add_to(m)
-
-    # 레이어 컨트롤 추가
+    folium.TileLayer(tiles="CartoDB positron", name="밝은 배경", control=True, show=False).add_to(m)
     folium.LayerControl().add_to(m)
 
-    # ✅ 주변 학교 오버레이(선택 기능)
+    # 학교 오버레이
     if school_overlay and school_overlay.get("enabled"):
         try:
             radius_m = int(school_overlay.get("radius_m", 2000))
             levels = school_overlay.get("levels") or ["초", "중", "고"]
-            limit = int(school_overlay.get("limit", 200))
-            
-            # center_lat, center_lon 기준으로 학교 검색
-            schools = fetch_nearby_schools_osm(center_lat, center_lon, radius_m, limit=limit)
-
-            # 색상 매핑: 초/중/고/기타
+            schools = fetch_nearby_schools_osm(center_lat, center_lon, radius_m)
             sch_color_map = {"초": "#2ca25f", "중": "#ff7f00", "고": "#de2d26", "기타": "#6a51a3"}
 
             for s in schools:
-                level = str(s.get("level", "기타"))
-                if level not in levels:
-                    continue
-                try:
-                    s_lat = float(s["lat"])
-                    s_lon = float(s["lon"])
-                except Exception:
-                    continue
-                name = str(s.get("name", "") or "")
-                color = sch_color_map.get(level, "#6a51a3")
-
+                if s.get("level") not in levels: continue
                 folium.CircleMarker(
-                    location=[s_lat, s_lon],
-                    radius=6,
-                    color=color,
-                    fill=True,
-                    fill_color=color,
-                    fill_opacity=0.9,
-                    tooltip=f"[{level}] {name}" if name else f"[{level}] 학교",
+                    location=[float(s["lat"]), float(s["lon"])],
+                    radius=6, color=sch_color_map.get(s["level"], "#6a51a3"),
+                    fill=True, fill_opacity=0.9,
+                    tooltip=f"[{s['level']}] {s['name']}"
                 ).add_to(m)
-        except Exception:
-            pass
+        except: pass
 
-    # ✅ 지하철역 및 반경 원 추가
+    # 지하철
     if stations:
-        radius_meters = walking_limit * 80  # 도보 1분당 약 80m 기준
+        radius_meters = walking_limit * 80
         for s_name, (s_lat, s_lon) in stations.items():
-            # 역 위치 마커
-            folium.Marker(
-                [s_lat, s_lon],
-                popup=s_name,
-                tooltip=f"🚉 {s_name}",
-                icon=folium.Icon(color="black", icon="subway", prefix="fa")
-            ).add_to(m)
+            folium.Marker([s_lat, s_lon], tooltip=f"🚉 {s_name}", icon=folium.Icon(color="black", icon="subway", prefix="fa")).add_to(m)
+            folium.Circle(location=[s_lat, s_lon], radius=radius_meters, color="blue", fill=True, fill_opacity=0.1, weight=1, interactive=False).add_to(m)
+
+    # 매물 마커
+    if df is not None and not df.empty:
+        # 색상 요구사항: 5,000만 미만=빨강 / 5,000만~5억=초록 / 5억 초과=파랑
+        color_map = {"5,000만 미만": "red", "5,000만 ~ 5억": "green", "5억 초과": "blue", "가격정보없음": "gray"}
+        for _, row in df.iterrows():
+            lat, lon = pd.to_numeric(row["위도"]), pd.to_numeric(row["경도"])
+            if pd.isna(lat) or pd.isna(lon): continue
             
-            # ✅ 역 중심 도보 반경 원 (상호작용 제거)
-            folium.Circle(
-                location=[s_lat, s_lon],
-                radius=radius_meters,
-                color="blue",
-                fill=True,
-                fill_color="blue",
-                fill_opacity=0.1,
-                weight=1,
-                interactive=False  # 클릭/마우스 오버 비활성화
+            icon_name = "building" if "아파트" in str(row["매물유형"]) else "home"
+            folium.Marker(
+                [lat, lon],
+                tooltip=f"[{row['매물유형']}] {row['단지/건물명']}",
+                popup=f"<b>{row['단지/건물명']}</b><br>가격: {row['가격']}<br>{row['매물유형']} / {row['거래유형']}",
+                icon=folium.Icon(color=color_map.get(row["가격구간"], "gray"), icon=icon_name, prefix="fa")
             ).add_to(m)
 
-    # 매물 마커 추가
-    for _, row in df.iterrows():
-        if pd.isna(row["위도"]) or pd.isna(row["경도"]):
-            continue
-        
-        popup_html = f"""
-            <div style='width:200px'>
-                <b>{row['단지/건물명']}</b><br>
-                가격: {row['가격']}<br>
-                유형: {row['매물유형']} / {row['거래유형']}<br>
-                면적: {row.get('면적(평)', 0):.1f}평
-            </div>
-        """
-        
-        # 1) 색상 설정 (가격구간 기반)
-        bucket = row.get("가격구간", "가격정보없음")
-        color = color_map.get(bucket, "gray")
-        
-        # 2) 아이콘 설정 (매물유형 기반)
-        rlet_type = str(row.get("매물유형", ""))
-        if "아파트" in rlet_type:
-            icon_name = "building"
-        elif "오피스텔" in rlet_type:
-            icon_name = "briefcase"
-        elif "빌라" in rlet_type or "다세대" in rlet_type:
-            icon_name = "home"
-        elif "단독" in rlet_type or "다가구" in rlet_type:
-            icon_name = "user"
-        else:
-            icon_name = "info-circle"
-        
-        folium.Marker(
-            [row["위도"], row["경도"]],
-            popup=folium.Popup(popup_html, max_width=300),
-            tooltip=f"[{rlet_type}] {row['단지/건물명']}",
-            icon=folium.Icon(color=color, icon=icon_name, prefix="fa")
-        ).add_to(m)
+    st_folium(m, use_container_width=True, height=500, returned_objects=[])
 
-    st_folium(m, width="stretch", height=500, returned_objects=[])
 
-# ----------------------------
-# A) 상세 페이지
-# ----------------------------
-if st.session_state["selected_atclNo"]:
-    atcl_no = st.session_state["selected_atclNo"]
-    row = df[df["매물ID"] == str(atcl_no)]
-    if row.empty:
-        st.warning("선택한 매물을 찾지 못했어요. (필터 변경으로 제외되었을 수 있어요)")
-        st.session_state["selected_atclNo"] = None
-        st.stop()
+# =========================================================
+# 4) UI 컴포넌트
+# =========================================================
+def kv_grid(data: dict, cols: int = 3):
+    """dict를 카드형 key-value 그리드로 예쁘게 출력"""
+    keys = list(data.keys())
+    rows = (len(keys) + cols - 1) // cols
+    for r in range(rows):
+        cs = st.columns(cols)
+        for c in range(cols):
+            i = r * cols + c
+            if i >= len(keys): continue
+            k, v = keys[i], data.get(keys[i], "")
+            v = "-" if (v is None or str(v).strip() == "") else str(v)
+            cs[c].markdown(f"""
+                <div style="background:rgba(255,255,255,0.92); border:1px solid #F0D36A; border-radius:14px; padding:12px; box-shadow:0 4px 14px rgba(0,0,0,0.03);">
+                  <div style="color:#6b5b00; font-size:0.85rem; margin-bottom:4px;">{k}</div>
+                  <div style="font-weight:700; font-size:1.02rem; color:#2f2500;">{v}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    r = row.iloc[0].to_dict()
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(f"📌 상세 보기: {r.get('단지/건물명','')}")
-    st.markdown(f"<div class='small'>매물ID: {r.get('매물ID','')}</div>", unsafe_allow_html=True)
+def sidebar_controls():
+    with st.sidebar:
+        st.markdown("## 🔎 검색")
+        default_kw = st.session_state.region_meta[0] if st.session_state.region_meta else ""
+        keyword = st.text_input("지역", value=default_kw, placeholder="예) 서울 종로구 / 잠실동 / 판교", key="kw")
+        limit = st.slider("가져올 개수", 10, 50, 50, 10, key="limit")
+
+        st.markdown("---")
+        st.markdown("## 🧰 필터")
+
+        # 거래유형
+        trad_opts = ["매매", "전세", "월세"]
+        st.session_state.setdefault("trad_all", True)
+        for t in trad_opts: st.session_state.setdefault(f"trad_{t}", True)
+        def sync_t():
+            for t in trad_opts: st.session_state[f"trad_{t}"] = st.session_state["trad_all"]
+        st.checkbox("거래유형 전체", key="trad_all", on_change=sync_t)
+        c1, c2, c3 = st.columns(3)
+        with c1: st.checkbox("매매", key="trad_매매")
+        with c2: st.checkbox("전세", key="trad_전세")
+        with c3: st.checkbox("월세", key="trad_월세")
+        trad_selected = [t for t in trad_opts if st.session_state[f"trad_{t}"]]
+
+        # 매물유형
+        rlet_opts = ["아파트", "오피스텔", "상가주택", "단독/다가구", "빌라", "다세대"]
+        st.session_state.setdefault("rlet_all", True)
+        for r in rlet_opts: st.session_state.setdefault(f"rlet_{r}", True)
+        def sync_r():
+            for r in rlet_opts: st.session_state[f"rlet_{r}"] = st.session_state["rlet_all"]
+        st.checkbox("매물유형 전체", key="rlet_all", on_change=sync_r)
+        colL, colR = st.columns(2)
+        for i, r in enumerate(rlet_opts):
+            target = colL if i % 2 == 0 else colR
+            target.checkbox(r, key=f"rlet_{r}")
+        rlet_selected = [r for r in rlet_opts if st.session_state[f"rlet_{r}"]]
+
+        st.markdown("---")
+        st.markdown("**면적(평)**")
+        py_min = st.number_input("최소", min_value=0.0, value=0.0, key="py_min")
+        py_max = st.number_input("최대", min_value=0.0, value=200.0, key="py_max")
+
+        st.markdown("**예산(상한)**")
+        b_eok = st.number_input("억", min_value=0, value=0, key="b_eok")
+        b_man = st.number_input("만원", min_value=0, value=0, step=100, key="b_man")
+        budget_limit = b_eok * 10000 + b_man
+
+        st.markdown("---")
+        st.markdown("## 🚉 지하철 필터")
+        subway_line = st.selectbox("노선 선택", options=["선택 안 함"] + list(SUBWAY_LINES.keys()), key="subway_line")
+        w_time = 10
+        if subway_line != "선택 안 함":
+            w_time = st.slider("최대 도보 시간 (분)", 5, 30, 10, 5, key="w_time")
+
+        st.markdown("---")
+        run = st.button("검색 실행", type="primary", use_container_width=True)
+
+    return {
+        "keyword": keyword, "limit": int(limit), "trad_selected": trad_selected, 
+        "rlet_selected": rlet_selected, "py_min": py_min, "py_max": py_max,
+        "budget_limit": budget_limit, "subway_line": subway_line, "w_time": w_time, "run": run
+    }
+
+
+# =========================================================
+# 5) 페이지 렌더링
+# =========================================================
+def render_lobby():
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("## 🏠 로비")
+    st.markdown("<div class='muted'>아래에서 할 일을 선택하세요.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>🧭 지역 탐색</div>", unsafe_allow_html=True)
+        if st.button("지역 탐색으로 이동", use_container_width=True):
+            st.session_state.page = "explore"; st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>🔎 매물 검색</div>", unsafe_allow_html=True)
+        if st.button("매물 검색으로 이동", use_container_width=True):
+            st.session_state.page = "search"; st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_explore():
+    if st.button("← 로비"): st.session_state.page = "lobby"; st.rerun()
+    st.markdown("<div class='card'><h2>🧭 지역 탐색</h2></div>", unsafe_allow_html=True)
+    colL, colR = st.columns([0.4, 0.6], gap="large")
+    with colL:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        kw = st.text_input("지역 입력", key="exp_kw")
+        if st.button("좌표 찾기", use_container_width=True):
+            try:
+                c, lat, lon = resolve_region(kw)
+                st.session_state.region_meta = (kw, c, lat, lon)
+            except Exception as e: st.error(str(e))
+        st.markdown("</div>", unsafe_allow_html=True)
+    with colR:
+        meta = st.session_state.region_meta
+        if meta:
+            kw, c, lat, lon = meta
+            st.markdown(f"<div class='card'><span class='badge'>지역</span> {kw}<br><span class='badge'>좌표</span> {lat}, {lon}</div>", unsafe_allow_html=True)
+            display_map(None, center_lat=lat, center_lon=lon, zoom=14)
+            if st.button("이 지역으로 매물 검색 →", use_container_width=True):
+                st.session_state.page = "search"; st.rerun()
+        else: st.info("지역을 입력해보세요.")
+
+
+def render_search():
+    if st.button("← 로비"): st.session_state.page = "lobby"; st.rerun()
+    ctl = sidebar_controls()
+    
+    if ctl["run"]:
+        st.session_state.selected_id = None
+        try:
+            c, lat, lon = resolve_region(ctl["keyword"])
+            st.session_state.region_meta = (ctl["keyword"], c, lat, lon)
+            with st.spinner("수집 중..."):
+                items = scraper.scrape_articles(cortar_no=c, lat=lat, lon=lon, limit=ctl["limit"])
+            if not items: st.warning("매물이 없습니다."); st.stop()
+            
+            df = items_to_dataframe(items)
+            df["가격(만원)"] = df["가격"].apply(parse_price_to_manwon)
+            df["면적(평)"] = pd.to_numeric(df["면적(㎡)"], errors="coerce").apply(sqm_to_pyeong)
+            df["가격구간"] = df["가격(만원)"].apply(price_bucket)
+            df["위도"] = pd.to_numeric(df["위도"], errors="coerce")
+            df["경도"] = pd.to_numeric(df["경도"], errors="coerce")
+            
+            # 지하철 필터
+            if ctl["subway_line"] != "선택 안 함":
+                stns = SUBWAY_LINES[ctl["subway_line"]]
+                def get_w(row):
+                    if pd.isna(row["위도"]) or pd.isna(row["경도"]): return 999
+                    m_t = 999
+                    for sn, (slat, slon) in stns.items():
+                        d = haversine_distance(row["위도"], row["경도"], slat, slon)
+                        t = estimate_walking_minutes(d)
+                        if t < m_t: m_t = t
+                    return m_t
+                df["도보시간(분)"] = df.apply(get_w, axis=1)
+                df = df[df["도보시간(분)"] <= ctl["w_time"]]
+            
+            # 기타 필터
+            if ctl["trad_selected"]: df = df[df["거래유형"].isin(ctl["trad_selected"])]
+            if ctl["rlet_selected"]: df = df[df["매물유형"].isin(ctl["rlet_selected"])]
+            df = df[(df["면적(평)"].isna()) | ((df["면적(평)"] >= ctl["py_min"]) & (df["면적(평)"] <= ctl["py_max"]))]
+            if ctl["budget_limit"] > 0: df = df[(df["가격(만원)"].isna()) | (df["가격(만원)"] <= ctl["budget_limit"])]
+            
+            st.session_state.df = df.sort_values("가격(만원)", ascending=False).reset_index(drop=True)
+        except Exception as e: st.error(str(e))
+
+    df = st.session_state.df
+    if df is None: st.info("지역을 입력하고 검색 실행을 눌러주세요."); return
+
+    # 학교 오버레이 옵션
+    with st.expander("🏫 지도 오버레이 (주변 학교 설정)", expanded=False):
+        c1, c2, c3, c4 = st.columns([1,1,1,2])
+        se = c1.checkbox("초등학교", key="se")
+        sm = c2.checkbox("중학교", key="sm")
+        sh = c3.checkbox("고등학교", key="sh")
+        r_m = c4.slider("반경(m)", 500, 5000, 2000, 500, key="r_m")
+        levels = []
+        if se: levels.append("초")
+        if sm: levels.append("중")
+        if sh: levels.append("고")
+        school_overlay = {"enabled": bool(levels), "levels": levels, "radius_m": r_m}
+
+    # 레이아웃
+    st.markdown(f"<div class='card'><h3>🔎 매물 검색 결과 ({len(df)}건)</h3></div>", unsafe_allow_html=True)
+    
+    L, R = st.columns([0.4, 0.6], gap="large")
+    with L:
+        st.markdown("<div class='card'><h4>📋 목록</h4>", unsafe_allow_html=True)
+        q = st.text_input("목록 내 검색", placeholder="건물명...", label_visibility="collapsed")
+        ldf = df[df["단지/건물명"].str.contains(q, case=False, na=False)] if q else df
+        for _, r in ldf.head(30).iterrows():
+            if st.button(f"{r['단지/건물명']} ({r['가격']})", key=f"btn_{r['매물ID']}", use_container_width=True):
+                st.session_state.selected_id = str(r["매물ID"])
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+    with R:
+        sel = st.session_state.selected_id or (str(df.iloc[0]["매물ID"]) if not df.empty else None)
+        if sel:
+            row = df[df["매물ID"] == sel].iloc[0]
+            st.markdown(f"<div class='card'><h4>📌 상세: {row['단지/건물명']}</h4>", unsafe_allow_html=True)
+            
+            curr_stns = SUBWAY_LINES.get(ctl["subway_line"]) if ctl.get("subway_line") != "선택 안 함" else None
+            display_map(df[df["매물ID"]==sel], center_lat=row["위도"], center_lon=row["경도"], zoom=16, 
+                        stations=curr_stns, walking_limit=ctl.get("w_time", 10), school_overlay=school_overlay)
+            
+            kv_grid({
+                "가격": row["가격"], "유형": f"{row['매물유형']}/{row['거래유형']}", 
+                "면적": f"{row['면적(평)']:.1f}평" if pd.notna(row['면적(평)']) else "-",
+                "층": row["층"], "방향": row["방향"], "확인일": row["확인일"]
+            })
+            if row["특징"]: st.markdown(f"<div class='card'><b>특징:</b><br>{row['특징']}</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    # 대시보드
+    st.markdown("<div class='card'><h4>📊 가격 구간 분포</h4>", unsafe_allow_html=True)
+    order = ["5,000만 미만", "5,000만 ~ 5억", "5억 초과", "가격정보없음"]
+    bc = df["가격구간"].value_counts().reindex(order).fillna(0).reset_index()
+    bc.columns = ["가격구간", "건수"]
+    fig = px.bar(bc, x="가격구간", y="건수", color="가격구간", color_discrete_map={"5,000만 미만":"red","5,000만 ~ 5억":"green","5억 초과":"blue","가격정보없음":"gray"})
+    st.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ✅ 상세 지도 (해당 매물 중심)
-    w_limit = st.session_state.get("walking_time_limit_val", 10)
-    display_map(
-        df[df["매물ID"] == str(atcl_no)], 
-        center_lat=r.get("위도"), 
-        center_lon=r.get("경도"), 
-        zoom=16, 
-        walking_limit=w_limit,
-        school_overlay=school_overlay
-    )
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("거래유형", r.get("거래유형", ""))
-    c2.metric("매물유형", r.get("매물유형", ""))
-    c3.metric("가격", r.get("가격", ""))
-
-    c4, c5, c6 = st.columns(3)
-    c4.metric("면적(평)", f"{r.get('면적(평)', None):.2f}" if pd.notna(r.get("면적(평)", None)) else "-")
-    c5.metric("층", r.get("층", ""))
-    c6.metric("방향", r.get("방향", ""))
-
-    st.markdown("### 추가 정보")
-    st.write({
-        "동/호": r.get("동/호", ""),
-        "중개사": r.get("중개사", ""),
-        "직거래": r.get("직거래", ""),
-        "확인일": r.get("확인일", ""),
-        "특징": r.get("특징", ""),
-        "가격(만원)": r.get("가격(만원)", None),
-        "가격구간": r.get("가격구간", ""),
-    })
-
-    st.button("← 목록으로", on_click=lambda: st.session_state.update({"selected_atclNo": None}))
-    st.stop()
-
-
-# ----------------------------
-# B) 목록 페이지 (요구사항: 건물 이름만 주루룩 → 클릭 → 상세)
-# ----------------------------
-st.subheader("🏢 매물 목록 (건물 이름)")
-st.caption("건물 이름을 클릭하면 상세보기로 이동합니다.")
-
-# 🚉 지하철 노선 정보 가져오기 (필터 상태 유지)
-selected_subway = st.session_state.get("subway_line", "선택 안 함")
-
-# ✅ 전체 지도 표시
-curr_stations = SUBWAY_LINES.get(selected_subway) if selected_subway != "선택 안 함" else None
-w_limit = st.session_state.get("walking_time_limit_val", 10)
-display_map(df, stations=curr_stations, walking_limit=w_limit, school_overlay=school_overlay)
-
-# “건물 이름만” 목록처럼 보이게 카드형 리스트 + 버튼으로 클릭 구현
-for _, r in df.iterrows():
-    name = r.get("단지/건물명", "")
-    atcl_no = r.get("매물ID", "")
-    price = r.get("가격", "")
-    bucket = r.get("가격구간", "가격정보없음")
-    pyeong = r.get("면적(평)", None)
-    walking_time = r.get("도보시간(분)", None)
-
-    # 간단 요약 라인 (이름 + 가격 + 면적 + 도보시간)
-    summary_parts = [price]
-    if pd.notna(pyeong):
-        summary_parts.append(f"{pyeong:.1f}평")
-    
-    # ✅ 지하철 노선을 선택했을 때만 도보 시간 표시
-    if selected_subway != "선택 안 함" and pd.notna(walking_time):
-        summary_parts.append(f"🚶 도보 {walking_time:.1f}분")
-    
-    summary = " / ".join(summary_parts)
-
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    cols = st.columns([4, 2, 2])
-    with cols[0]:
-        # 버튼 텍스트를 “건물명”으로
-        if st.button(f"{name}", key=f"btn_{atcl_no}"):
-            st.session_state["selected_atclNo"] = str(atcl_no)
-            st.rerun()
-
-        st.markdown(f"<div class='small'>{summary}</div>", unsafe_allow_html=True)
-
-    with cols[1]:
-        st.markdown(f"<div class='small'>거래: {r.get('거래유형','')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small'>유형: {r.get('매물유형','')}</div>", unsafe_allow_html=True)
-
-    with cols[2]:
-        # 가격구간 색은 차트에서 주로 쓰고, 목록에서는 텍스트로만 표기(가독성)
-        st.markdown(f"<div class='small'>구간: <b>{bucket}</b></div>", unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ----------------------------
-# C) 대시보드 (가격 구간 분포)
-# ----------------------------
-st.subheader("📊 대시보드: 가격 구간 분포")
-
-bucket_order = ["5,000만 미만", "5,000만 ~ 5억", "5억 초과", "가격정보없음"]
-bucket_counts = (
-    df["가격구간"]
-    .value_counts()
-    .reindex(bucket_order)
-    .fillna(0)
-    .astype(int)
-    .reset_index()
-)
-bucket_counts.columns = ["가격구간", "건수"]
-
-fig_bar = px.bar(
-    bucket_counts,
-    x="가격구간",
-    y="건수",
-    color="가격구간",
-    color_discrete_map=color_map,
-    text="건수",
-)
-fig_bar.update_layout(height=360, xaxis_title="", yaxis_title="매물 수", legend_title_text="")
-st.plotly_chart(fig_bar, width="stretch")
-
-# 다운로드: 필터된 DataFrame 저장 활용
-st.download_button(
-    "CSV 다운로드(필터 적용 결과)",
-    data=df.to_csv(index=False, encoding="utf-8-sig"),
-    file_name="filtered_listings.csv",
-    mime="text/csv",
-    width="stretch",
-)
+# =========================================================
+# 6) 라우팅
+# =========================================================
+if st.session_state.page == "lobby": render_lobby()
+elif st.session_state.page == "explore": render_explore()
+else: render_search()

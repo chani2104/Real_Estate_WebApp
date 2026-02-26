@@ -1,7 +1,7 @@
 """
 네이버 부동산 API 스크래퍼 (정리본)
-- clusterList: 지도/지역 범위 내 매물 클러스터 및 totCnt 계산
-- articleList: 매물 목록 (페이지네이션)
+- clusterList: 클러스터 정보 및 totCnt 계산 + bounds 확보
+- articleList: 매물 목록(body) 페이지네이션
 """
 
 import time
@@ -14,7 +14,7 @@ BASE_URL = "https://m.land.naver.com"
 CLUSTER_LIST_URL = f"{BASE_URL}/cluster/clusterList"
 ARTICLE_LIST_URL = f"{BASE_URL}/cluster/ajax/articleList"
 
-# 매물/거래 유형 필터 (필요 시 여기만 바꾸면 됨)
+# 매물/거래 유형 필터 (원하면 여기만 바꿔도 됨)
 RLET_TP_CD = "OR:APT:JGC:OPST:ABYG:OBYG:VL:YR:DSD:JWJT:SGJT:DDDGG"
 TRAD_TP_CD = "B1:B2:B3"
 
@@ -37,7 +37,7 @@ def _headers() -> Dict[str, str]:
 def calc_bounds(lat: float, lon: float, z: int = 12) -> Tuple[float, float, float, float]:
     """
     중심좌표 기반 지도 범위(btm, lft, top, rgt) 계산
-    - 현재는 고정 delta 사용 (원하면 z에 따라 delta를 조정하도록 바꿀 수 있음)
+    - 고정 delta 사용(원하면 z에 따라 가변으로 변경 가능)
     """
     delta_lat = 0.09
     delta_lon = 0.18
@@ -48,12 +48,11 @@ def fetch_cluster_list(cortar_no: str, lat: float, lon: float, z: int = 12) -> D
     """
     clusterList 호출
     반환:
-      - tot_cnt: 클러스터 count 합 (총 매물 수 추정)
-      - region_name: 지역명 (가능한 경우)
+      - tot_cnt: 클러스터 count 합(총 매물 수 추정)
+      - region_name: 지역명(가능한 경우)
       - bounds: btm/lft/top/rgt
     """
     btm, lft, top, rgt = calc_bounds(lat, lon, z)
-
     params = {
         "view": "atcl",
         "cortarNo": cortar_no,
@@ -77,11 +76,10 @@ def fetch_cluster_list(cortar_no: str, lat: float, lon: float, z: int = 12) -> D
     if data.get("code") != "success":
         raise RuntimeError(f"clusterList API 오류: {data.get('code', 'unknown')}")
 
-    # tot_cnt 계산: ARTICLE 배열의 count 합
+    # totCnt 계산: ARTICLE 배열의 count 합
     articles = data.get("data", {}).get("ARTICLE", [])
     tot_cnt = sum(a.get("count", 1) for a in articles)
 
-    # regionName 추출
     region_name = (
         data.get("data", {})
         .get("cortar", {})
@@ -111,13 +109,7 @@ def fetch_article_list(
     rgt: Optional[float] = None,
     z: int = 12,
 ) -> Dict[str, Any]:
-    """
-    articleList 호출
-    반환:
-      - body: 매물 리스트 (List[dict])
-      - more: 다음 페이지 존재 여부
-      - page: 현재 페이지
-    """
+    """articleList 호출"""
     if btm is None:
         btm, lft, top, rgt = calc_bounds(lat, lon, z)
 
@@ -161,8 +153,8 @@ def scrape_articles(
     cancel_check=None,
 ) -> List[Dict[str, Any]]:
     """
-    clusterList → articleList 호출로 매물 수집
-    - limit 만큼만 모이면 중단 (대시보드용 빠른 수집)
+    clusterList → articleList 순서로 매물 수집
+    - limit 만큼만 모이면 중단(빠른 UI용)
     """
     time.sleep(REQUEST_DELAY)
     cluster = fetch_cluster_list(cortar_no, lat, lon)
@@ -201,10 +193,8 @@ def scrape_articles(
         if progress_callback:
             progress_callback(min(len(all_items), limit), min(tot_cnt, limit), f"수집 중... ({len(all_items)})")
 
-        # ✅ limit만 모이면 중단
         if len(all_items) >= limit:
             break
-
         if not result["more"]:
             break
 

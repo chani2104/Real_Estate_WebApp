@@ -1,27 +1,16 @@
 """
-유틸리티: DataFrame 변환 / 가격 파싱 / 거리 계산 / 엑셀 저장
+유틸리티: DataFrame 변환 / 가격 파싱 / 거리 계산 / 엑셀 저장 / 가격 구간 분류
 """
 
-import os
 import re
 import math
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-try:
-    import pandas as pd
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
-
-try:
-    import openpyxl
-    HAS_OPENPYXL = True
-except ImportError:
-    HAS_OPENPYXL = False
+import pandas as pd
 
 
-# 표시/저장에 사용할 컬럼 정의 (네이버 item(dict)의 key → 표 헤더)
 TABLE_COLUMNS = [
     ("atclNo", "매물ID"),
     ("atclNm", "단지/건물명"),
@@ -41,8 +30,8 @@ TABLE_COLUMNS = [
 ]
 
 
-def _norm_value(v: Any) -> str:
-    """리스트/None 처리 포함해서 표에 넣기 좋은 문자열로 정규화"""
+def _norm(v: Any) -> str:
+    """표에 넣기 좋은 문자열로 정규화(None/list 처리)"""
     if v is None:
         return ""
     if isinstance(v, list):
@@ -50,30 +39,21 @@ def _norm_value(v: Any) -> str:
     return str(v)
 
 
-def items_to_dataframe(items: List[Dict[str, Any]]):
-    """
-    네이버 articleList의 body(items)를 TABLE_COLUMNS 기준으로 DataFrame으로 변환
-    """
-    if not HAS_PANDAS:
-        raise ImportError("pandas가 필요합니다. pip install pandas")
-
+def items_to_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
+    """네이버 items(list[dict])를 TABLE_COLUMNS 기준으로 DF로 변환"""
     keys = [k for k, _ in TABLE_COLUMNS]
     headers = [h for _, h in TABLE_COLUMNS]
-
-    rows = []
-    for it in items:
-        rows.append([_norm_value(it.get(k)) for k in keys])
-
+    rows = [[_norm(it.get(k)) for k in keys] for it in items]
     return pd.DataFrame(rows, columns=headers)
 
 
 def parse_price_to_manwon(text: Any) -> Optional[int]:
     """
     가격 문자열(hanPrc)을 '만원 단위 정수'로 변환 (정렬/구간 나눔용)
+    예: '12억 3,000' -> 123000, '4,800' -> 4800, '5억' -> 50000
     """
     if text is None:
         return None
-
     s = str(text).replace(" ", "").replace(",", "")
     if s in ("", "-", "없음"):
         return None
@@ -116,19 +96,25 @@ def estimate_walking_minutes(distance_km, speed_kmh=4.8):
     return (distance_km / speed_kmh) * 60
 
 
-def save_to_excel(items: List[Dict[str, Any]], filepath: str) -> str:
-    """TABLE_COLUMNS 기반으로 엑셀 저장"""
-    if not items:
+def save_to_excel(df: pd.DataFrame, filepath: str) -> str:
+    """DataFrame을 엑셀로 저장"""
+    if df.empty:
         raise ValueError("저장할 매물 데이터가 없습니다.")
 
-    headers = [h for _, h in TABLE_COLUMNS]
-    keys = [k for k, _ in TABLE_COLUMNS]
-    rows = [[_norm_value(it.get(k)) for k in keys] for it in items]
-
-    if HAS_PANDAS:
-        df = pd.DataFrame(rows, columns=headers)
-        df.to_excel(filepath, index=False, engine="openpyxl")
-    else:
-        raise ImportError("pip install pandas openpyxl이 필요합니다.")
-
+    df.to_excel(filepath, index=False, engine="openpyxl")
     return os.path.abspath(filepath)
+
+
+def price_bucket(manwon: Optional[int]) -> str:
+    """
+    가격 구간 분류(요구사항)
+      - 5,000만 미만 / 5,000만 ~ 5억 / 5억 초과
+    단위: 만원 (5000, 50000 기준)
+    """
+    if manwon is None:
+        return "가격정보없음"
+    if manwon < 5000:
+        return "5,000만 미만"
+    if manwon <= 50000:
+        return "5,000만 ~ 5억"
+    return "5억 초과"
