@@ -11,8 +11,12 @@ from streamlit_folium import st_folium
 import sys
 import os
 
-# 현재 디렉토리를 path에 추가하여 로컬 모듈 로드 보장
+# 현재 디렉토리와 모듈 디렉토리를 path에 추가하여 로컬 모듈 로드 보장
 current_dir = os.path.dirname(os.path.abspath(__file__))
+module_dir = os.path.join(os.path.dirname(current_dir), "frontend", "map_service")
+
+if module_dir not in sys.path:
+    sys.path.append(module_dir)
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
@@ -25,6 +29,9 @@ from poi_schools import fetch_nearby_schools_osm
 # 0) 페이지 설정 + 스타일(노랑톤 + 부드러운 폰트 + 상단 흰바 숨김)
 # =========================================================
 st.set_page_config(page_title="부동산 웹앱", layout="wide", initial_sidebar_state="expanded")
+
+if st.button("🏠 홈으로 이동"):
+    st.switch_page("app.py")
 
 st.markdown(
     """

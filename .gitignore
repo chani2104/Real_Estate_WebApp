@@ -9,4 +9,9 @@ __pycache__/
 *.pyc
 
 # VSCode
+<<<<<<< HEAD
 .vscode/
+=======
+.vscode/
+
+>>>>>>> origin/search/combine

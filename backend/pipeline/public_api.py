@@ -13,6 +13,8 @@ def get_all_dongs():
     all_items = []
     page = 1
     
+    # 기초자치단체는 전국에 약 226~250개 사이이므로 보통 1페이지로 충분하지만,
+    # 안전하게 루프를 사용합니다.
     while True:
         url = "http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList"
         params = {
@@ -47,16 +49,26 @@ def get_all_dongs():
 
     df = pd.DataFrame(all_items)
 
+    # 1. 활성 지역 필터링
     if "flag" in df.columns:
         df = df[df["flag"] == "Y"].copy()
     
     df["region_cd"] = df["region_cd"].astype(str)
 
+    # 2. 기초자치단체(시/군/구) 추출 로직
+    # 법정동 코드 체계상:
+    # - 앞 2자리만 있고 나머지가 0이면 '광역자치단체'(시/도)
+    # - 앞 5자리까지 있고 나머지가 0이면 '기초자치단체'(시/군/구)
+    
+    # 광역자치단체(끝 8자리가 00000000)를 제외하고,
+    # 기초자치단체(끝 5자리가 00000)인 데이터만 필터링합니다.
+    
     df_basic = df[
         (df["region_cd"].str.endswith("00000")) & 
         (~df["region_cd"].str.endswith("00000000"))
     ].copy()
 
+    # 3. 데이터 정리
     df_basic = df_basic.rename(columns={
         "region_cd": "dong_code",
         "locatadd_nm": "region_name"

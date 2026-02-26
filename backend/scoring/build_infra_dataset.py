@@ -1,12 +1,8 @@
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
-import sys
-import os
-import tqdm 
-
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from pipeline.public_api import get_all_dongs
+from public_api import get_all_dongs
 from scoring import calculate_score
+import tqdm # 진행 상황 확인용 (pip install tqdm 필요)
 
 def process_region(row):
     try:
@@ -31,15 +27,17 @@ def main():
     print(f"🚀 총 {len(df_regions)}개 지역 분석 시작...")
 
     results = []
+    # ThreadPoolExecutor를 사용하여 병렬 처리 속도 향상
     with ThreadPoolExecutor(max_workers=5) as executor:
+        # 진행 바 표시 (선택 사항)
         list_records = df_regions.to_dict("records")
         for result in tqdm.tqdm(executor.map(process_region, list_records), total=len(list_records)):
             if result:
                 results.append(result)
 
     final_df = pd.DataFrame(results)
-    # 데이터 경로를 중앙 data 폴더로 설정
-    output_path = os.path.join(os.path.dirname(__file__), '../../data/전국_기초자치_인프라_점수.csv')
+    # data/ 폴더에 저장하도록 경로 수정
+    output_path = "../../data/전국_기초자치_인프라_점수.csv" if os.path.exists("../../data") else "data/전국_기초자치_인프라_점수.csv"
     final_df.to_csv(output_path, index=False, encoding="utf-8-sig")
     print(f"✅ 분석 완료! 저장된 행 개수: {len(final_df)}")
 
