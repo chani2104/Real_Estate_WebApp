@@ -38,6 +38,9 @@ TABLE_COLUMNS = [
     ("atclFetrDesc", "특징"),
     ("lat", "위도"),
     ("lng", "경도"),
+    ("repImgUrl", "대표이미지URL"),
+    ("rletTpCd", "매물유형코드"),
+    ("tradTpCd", "거래유형코드"),
 ]
 
 

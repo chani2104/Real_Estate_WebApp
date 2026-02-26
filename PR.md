@@ -179,3 +179,48 @@
 - `folium` + `streamlit-folium` 조합을 사용하여, **지역 중심좌표 기반의 인터랙티브 지도** 와 **매물 리스트** 를 같은 화면에 배치한다.
 - 1차 버전에서는 **지역 단위 지도 + 매물 기본 마커/리스트** 를 목표로 하고, 이후 점진적으로 **클러스터링, 인터랙션, 자연어 검색 고도화** 를 확장하는 방향을 제안한다.
 
+---
+
+## 매물 사진 기능 (추가 구현)
+
+### 목표 및 배경
+
+- **목표**: 매물 목록에서 건물명을 클릭해 상세로 들어갔을 때, 해당 매물의 **등록 사진**을 화면에 표시한다.
+- **배경**: 목록 API(`articleList`)에서는 대표 이미지 URL(`repImgUrl`) 한 개만 제공하고, 상세 페이지에 나오는 **여러 장의 사진**은 별도 API/페이지에서 불러와야 한다. 또한 API가 주는 URL에 `?type=m562` 등이 붙어 있으면 **썸네일**만 받게 되므로, 원본에 가까운 크기로 보이도록 변환해야 한다.
+
+### 변경 사항 요약
+
+1. **데이터**
+   - `utils.TABLE_COLUMNS`에 `repImgUrl`(대표이미지URL), `rletTpCd`(매물유형코드), `tradTpCd`(거래유형코드)를 추가해 목록 수집 시 함께 보관.
+2. **상세 이미지 조회 (scraper)**
+   - **galleryImages API** (`fin.land.naver.com/front-api/v1/article/galleryImages?articleNumber=매물ID`): 매물번호만으로 이미지 목록을 받아 오는 전용 API를 **가장 먼저** 호출. 응답 `result[]` 안의 `imageUrl`을 수집.
+   - **basicInfo API** (`fin.land.naver.com/.../article/basicInfo`, `articleId` + `realEstateType` + `tradeType`): galleryImages가 없을 때 상세 정보를 받아 와서, JSON을 재귀 탐색해 이미지 URL을 추출.
+   - **m.land articleInfo / 상세 HTML**: 위 두 가지가 실패할 때의 fallback. HTML에서 `landthumb-phinf`, `naver-file.ebunyang` 등 매물 이미지 도메인 URL만 정규식으로 추출.
+3. **썸네일 → 원본 크기 변환**
+   - 네이버 `landthumb-phinf.pstatic.net` URL은 쿼리 `?type=m562` 등이 있으면 작은 크기로 내려준다. **`type`, `udate` 쿼리를 제거**한 URL로 다시 요청하면 원본에 가까운 크기를 받을 수 있음.
+   - `_thumbnail_to_full_size_url(url)`: URL 파싱 후 해당 쿼리만 제거해 반환. galleryImages/basicInfo/HTML에서 나온 모든 이미지 URL과, 앱에서 쓰는 대표이미지 URL에 적용.
+4. **앱 (app.py)**
+   - 상세 보기 진입 시: 행의 `대표이미지URL`을 `get_full_size_image_url`로 변환해 목록에 넣고, `get_article_image_urls(매물ID, 매물유형코드, 거래유형코드)`로 상세 이미지 URL 목록을 받아와 합친 뒤, 중복 제거하여 `st.image()`로 3열 그리드 표시. 목록 API에서 코드가 없으면 한글명(아파트→APT, 매매→B1 등)으로 추정해 basicInfo fallback에 사용.
+
+### 원리 (Network / API 관점)
+
+- 브라우저에서 매물 **상세 페이지**를 열면, JavaScript가 **Fetch/XHR**로 데이터 API를 호출한다. F12 → Network → Fetch/XHR에서 `fin.land.naver.com` 또는 `galleryImages`, `basicInfo` 같은 요청을 보면, 그 요청의 **Request URL·파라미터**와 **Response JSON**이 곧 “어디서 무엇을 넘기고, 어떤 필드에 이미지 URL이 들어 있는지”에 해당한다.
+- 우리 코드는 그 **GET 요청을 그대로 Python `requests`로 재현**하고, 응답 JSON에서 `result`, `imageUrl` 등 이미지 URL이 들어 있는 필드만 파싱한다. 이미지 파일 자체는 Network의 “Img” 탭에서 로드되지만, **그 이미지의 URL을 주는 것은 Fetch/XHR 응답**이므로, 이미지 목록을 얻으려면 Fetch/XHR에서 호출하는 API를 찾아 그걸 흉내 내면 된다.
+- 상세 페이지 HTML(Next.js 등)에는 가끔 **서버가 넣어 둔 JSON**이 `<script>` 안에 들어 있다. 그 안에 `GET /article/galleryImages` 결과가 포함되어 있으면, `imageUrl` 검색으로 같은 구조를 확인할 수 있고, 우리는 동일한 API를 직접 호출해 같은 데이터를 받는다.
+
+### 기술적 포인트
+
+- **scraper**
+  - `fetch_article_gallery_images(article_id)`: galleryImages URL 후보 2종 호출, `result[].imageUrl` 수집 후 `_thumbnail_to_full_size_url` 적용해 반환.
+  - `fetch_article_basic_info(article_id, real_estate_type, trade_type)`: basicInfo 호출, `result`만 반환.
+  - `_extract_image_urls_from_json(obj)`: dict/list 재귀 탐색, `url` / `imageUrl` / `imgUrl` 등 문자열이면서 `http`로 시작하고 매물 이미지 도메인 패턴이면 수집.
+  - `get_article_image_urls(atcl_no, rlet_tp_cd, trad_tp_cd)`: galleryImages → basicInfo → m.land articleInfo → 상세 HTML 순으로 시도하고, 각 단계에서 나온 URL에 썸네일→원본 변환을 적용한 뒤 반환.
+  - `get_full_size_image_url(url)`: 앱에서 대표이미지 등 단일 URL을 쓸 때 호출. 내부적으로 `_thumbnail_to_full_size_url` 사용.
+- **app**
+  - 상세 보기에서 `대표이미지URL`을 `get_full_size_image_url`로 변환한 뒤, `get_article_image_urls`로 받은 목록과 합쳐서 중복 제거, `st.image(url)`로 표시. 로컬에 저장된 `images/{매물ID}.jpg`가 있으면 URL 실패 시 대표 이미지로만 사용.
+
+### 정리
+
+- 매물 상세 진입 시 **galleryImages(우선) → basicInfo → m.land/HTML** 순으로 이미지 URL을 구하고, **썸네일 쿼리 제거**로 원본에 가까운 크기를 요청하도록 구현했다.
+- F12 Network에서 “어떤 API가 이미지 URL을 주는지”를 확인한 뒤, 그 요청을 그대로 재현하고 응답만 파싱하는 방식으로 동작한다.
+

@@ -1,4 +1,5 @@
 # app.py
+import os
 import re
 from urllib.parse import quote, urlparse, parse_qs
 
@@ -501,6 +502,51 @@ if st.session_state["selected_atclNo"]:
     st.subheader(f"📌 상세 보기: {r.get('단지/건물명','')}")
     st.markdown(f"<div class='small'>매물ID: {r.get('매물ID','')}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ✅ 매물 사진: 대표이미지 + 상세 페이지 이미지(매물 코드로 조회, 썸네일→원본 크기 변환)
+    rep_url = (r.get("대표이미지URL") or "").strip()
+    if rep_url and rep_url.startswith("/"):
+        rep_url = "https://landthumb-phinf.pstatic.net" + rep_url
+    rep_url = scraper.get_full_size_image_url(rep_url)
+    image_urls = []
+    if rep_url:
+        image_urls.append(rep_url)
+    with st.spinner("매물 사진 불러오는 중…"):
+        rlet_cd = (r.get("매물유형코드") or "").strip()
+        trad_cd = (r.get("거래유형코드") or "").strip()
+        # 목록 API에서 코드가 안 오면 한글명으로 추정 (Front API 호출용)
+        if not rlet_cd and r.get("매물유형"):
+            rlet_map = {"아파트": "APT", "오피스텔": "OPST", "빌라": "VL", "다세대": "DDDGG", "단독/다가구": "ABYG", "상가주택": "JGC"}
+            rlet_cd = rlet_map.get(str(r.get("매물유형", "")).strip(), "APT")
+        if not trad_cd and r.get("거래유형"):
+            trad_map = {"매매": "B1", "전세": "B2", "월세": "B3"}
+            trad_cd = trad_map.get(str(r.get("거래유형", "")).strip(), "B1")
+        detail_urls = scraper.get_article_image_urls(
+            str(atcl_no),
+            rlet_tp_cd=rlet_cd or None,
+            trad_tp_cd=trad_cd or None,
+        )
+    for u in detail_urls:
+        if u and u not in image_urls:
+            image_urls.append(u)
+
+    local_path = os.path.join(scraper.IMAGE_DIR, f"{atcl_no}.jpg")
+    if image_urls:
+        st.markdown("### 📷 매물 사진")
+        # 3열 그리드로 표시
+        n = len(image_urls)
+        cols = st.columns(3)
+        for i, url in enumerate(image_urls):
+            try:
+                with cols[i % 3]:
+                    st.image(url, caption=f"사진 {i+1}", use_container_width=True)
+            except Exception:
+                pass
+    elif os.path.isfile(local_path):
+        st.markdown("### 📷 매물 사진")
+        st.image(local_path, caption="대표 이미지", use_container_width=True)
+    else:
+        st.caption("이 매물의 등록 사진을 불러올 수 없습니다.")
 
     # ✅ 상세 지도 (해당 매물 중심)
     w_limit = st.session_state.get("walking_time_limit_val", 10)
