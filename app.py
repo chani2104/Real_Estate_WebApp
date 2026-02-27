@@ -504,48 +504,90 @@ if st.session_state["selected_atclNo"]:
     st.markdown("</div>", unsafe_allow_html=True)
 
     # ✅ 매물 사진: 대표이미지 + 상세 페이지 이미지(매물 코드로 조회, 썸네일→원본 크기 변환)
+    # 데이터프레임(또는 딕셔너리) r에서 '대표이미지URL' 값을 가져옵니다. 값이 없으면 빈 문자열("")로 처리하고 양쪽 공백을 제거합니다.
     rep_url = (r.get("대표이미지URL") or "").strip()
+    
+    # 대표 이미지 주소가 존재하고, 그 주소가 '/'로 시작한다면 (즉, 도메인이 빠진 불완전한 주소라면)
     if rep_url and rep_url.startswith("/"):
+        # 네이버 이미지 전용 서버 도메인을 앞에 붙여서 완전한 URL로 조립해 줍니다.
         rep_url = "https://landthumb-phinf.pstatic.net" + rep_url
+        
+    # 썸네일용으로 리사이징된 이미지 주소를 원본 고화질 해상도 주소로 변환합니다.
     rep_url = scraper.get_full_size_image_url(rep_url)
+    
+    # 화면에 보여줄 최종 사진 주소들을 담을 텅 빈 리스트를 준비합니다.
     image_urls = []
+    
+    # 고화질 대표 이미지가 정상적으로 확보되었다면, 가장 먼저 리스트에 1순위로 넣습니다.
     if rep_url:
         image_urls.append(rep_url)
+        
+    # "매물 사진 불러오는 중…" 이라는 빙글빙글 도는 로딩 애니메이션을 화면에 띄웁니다.
     with st.spinner("매물 사진 불러오는 중…"):
+        # 상세 사진을 가져오는 API를 호출하려면 코드가 필요하므로, 데이터에서 코드를 빼옵니다.
         rlet_cd = (r.get("매물유형코드") or "").strip()
         trad_cd = (r.get("거래유형코드") or "").strip()
+        
         # 목록 API에서 코드가 안 오면 한글명으로 추정 (Front API 호출용)
+        # 매물유형 코드가 비어있는데 한글 '매물유형' 이름(예: 아파트, 빌라)은 존재한다면
         if not rlet_cd and r.get("매물유형"):
+            # 한글 이름을 네이버 내부 영문 코드로 변환하기 위한 사전(Dictionary)을 만듭니다.
             rlet_map = {"아파트": "APT", "오피스텔": "OPST", "빌라": "VL", "다세대": "DDDGG", "단독/다가구": "ABYG", "상가주택": "JGC"}
+            # 사전을 뒤져서 코드를 찾고, 만약 사전에 없는 요상한 이름이면 기본값 "APT"(아파트)를 씁니다.
             rlet_cd = rlet_map.get(str(r.get("매물유형", "")).strip(), "APT")
+            
+        # 거래유형 코드도 비어있는데 한글 '거래유형' 이름(예: 매매, 전세)은 존재한다면
         if not trad_cd and r.get("거래유형"):
+            # 거래 방식을 코드로 변환하기 위한 사전을 만듭니다.
             trad_map = {"매매": "B1", "전세": "B2", "월세": "B3"}
+            # 사전을 뒤져서 코드를 찾고, 없으면 기본값 "B1"(매매)을 씁니다.
             trad_cd = trad_map.get(str(r.get("거래유형", "")).strip(), "B1")
+            
+        # 매물 번호와 위에서 억지로라도 찾아낸 코드들을 이용해 네이버 서버를 찔러 모든 상세 갤러리 사진 주소를 가져옵니다.
         detail_urls = scraper.get_article_image_urls(
             str(atcl_no),
             rlet_tp_cd=rlet_cd or None,
             trad_tp_cd=trad_cd or None,
         )
+        
+    # 서버에서 긁어온 상세 사진 주소들을 하나씩 꺼내보면서
     for u in detail_urls:
+        # 주소가 제대로 있고, 이미 추가해둔 대표사진과 겹치지 않는 새로운 사진이라면
         if u and u not in image_urls:
+            # 최종 리스트에 차곡차곡 추가합니다.
             image_urls.append(u)
 
+    # 인터넷 통신 실패를 대비해, 예전에 내 컴퓨터 폴더(images)에 저장해둔 사진 파일의 경로를 미리 찾아둡니다.
     local_path = os.path.join(scraper.IMAGE_DIR, f"{atcl_no}.jpg")
+    
+    # 1. 만약 수집된 사진이 1장이라도 있다면 (인터넷에서 사진 가져오기 대성공)
     if image_urls:
+        # 화면에 "### 📷 매물 사진" 이라는 제목을 출력합니다.
         st.markdown("### 📷 매물 사진")
-        # 3열 그리드로 표시
+        # 3열 그리드로 표시 (총 사진 개수를 잽니다)
         n = len(image_urls)
+        # Streamlit의 컬럼 기능을 써서 화면을 세로 3칸으로 나눕니다.
         cols = st.columns(3)
+        # 사진들을 순서대로(i) 돌면서 화면에 그립니다.
         for i, url in enumerate(image_urls):
             try:
+                # i % 3 을 계산해서 0, 1, 2번째 칸에 번갈아가며 사진을 넣습니다. (바둑판 배열 완성)
                 with cols[i % 3]:
+                    # 칸 너비에 꽉 차게 사진을 렌더링하고, 밑에 "사진 1", "사진 2" 같은 캡션을 달아줍니다.
                     st.image(url, caption=f"사진 {i+1}", use_container_width=True)
             except Exception:
+                # 특정 사진 하나를 그리다가 에러가 나도 프로그램 전체가 뻗지 않게 조용히 무시(pass)합니다.
                 pass
+                
+    # 2. 인터넷에서 사진을 한 장도 못 가져왔지만, 내 컴퓨터(로컬)에 저장된 썸네일 파일이 있다면
     elif os.path.isfile(local_path):
         st.markdown("### 📷 매물 사진")
+        # 꿩 대신 닭으로 로컬에 있는 그 대표 이미지 한 장이라도 화면에 보여줍니다.
         st.image(local_path, caption="대표 이미지", use_container_width=True)
+        
+    # 3. 인터넷에서도 실패하고, 내 컴퓨터에도 저장된 파일이 아예 없다면
     else:
+        # 회색의 작고 흐린 글씨로 사진이 없다는 안내 문구를 남깁니다.
         st.caption("이 매물의 등록 사진을 불러올 수 없습니다.")
 
     # ✅ 상세 지도 (해당 매물 중심)
