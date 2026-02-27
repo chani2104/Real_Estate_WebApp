@@ -85,6 +85,21 @@ button[aria-label*="Collapse"][aria-label*="sidebar"] {
 .brand-dot { color: #03C75A; } /* 네이버 그린 느낌 */
 .topbar-sub { color: #6B7280; font-size: 0.92rem; margin-top: 2px; }
 
+/* ✅ 사이드바 강제 표시 (접힘 상태까지 풀기) */
+section[data-testid="stSidebar"]{
+  display: block !important;
+  visibility: visible !important;
+  transform: none !important;
+  margin-left: 0 !important;
+  width: 21rem !important;      /* 핵심: 접히면 width=0 되는 케이스 방지 */
+  min-width: 21rem !important;
+}
+
+/* sidebar 내부 컨텐츠도 폭 보장 */
+section[data-testid="stSidebar"] > div{
+  width: 21rem !important;
+}
+
 /* ===== 공용 카드 ===== */
 .card {
   background: #FFFFFF;
@@ -115,9 +130,10 @@ div.stButton>button[kind="primary"] { background: #03C75A; border: 1px solid #03
 div.stButton>button[kind="primary"]:hover { filter: brightness(0.96); }
 
 /* ===== 리스트(네이버처럼: 좌측 목록 스크롤 분리) ===== */
-.list-wrap {
-  height: 72vh;             /* ✅ 목록 영역 높이 고정 */
-  overflow: auto;           /* ✅ 목록만 스크롤 */
+.list-wrap{
+  max-height: 72vh;   /* ✅ 최대 높이만 */
+  height: auto;       /* ✅ 내용만큼 늘어남 */
+  overflow: auto;
   padding-right: 6px;
 }
 .list-item{
@@ -850,7 +866,7 @@ def render_search():
 
     # LEFT: list (scroll inside)
     with L:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("---")
         st.markdown("<div class='section-title'>📋 목록</div>", unsafe_allow_html=True)
         q = st.text_input("목록 내 검색", placeholder="건물명 검색...", label_visibility="collapsed")
         ldf = df[df["단지/건물명"].str.contains(q, case=False, na=False)] if q else df
@@ -905,7 +921,7 @@ def render_search():
         if sel:
             row = df[df["매물ID"] == sel].iloc[0]
 
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown("---")
             st.markdown("<div class='section-title'>🗺️ 지도</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='muted'><b>{row['단지/건물명']}</b> 중심으로 표시</div>", unsafe_allow_html=True)
 
@@ -996,7 +1012,7 @@ def render_search():
     # dashboard (like naver's mini stats)
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.markdown("<div class='section-title'>📊 가격 구간 분포</div>", unsafe_allow_html=True)
-    order = ["1억 미만", "1억 ~ 5억", "5억 ~ 10억", "10억 초과", "가격정보없음"]
+    order = ["1억 미만", "1억 ~ 5억", "5억 ~ 10억", "10억 초과"]
     bc = df["가격구간"].value_counts().reindex(order).fillna(0).reset_index()
     bc.columns = ["가격구간", "건수"]
     fig = px.bar(
