@@ -349,14 +349,14 @@ def render_team_explore():
             )
 
             # 버튼은 아래에서 "넓고 크게"
-            go = st.button(
+            go_search = st.button(
                 "🔎 이 지역 매물 검색하기",
                 key="go_search_from_map",
                 type="primary",
                 use_container_width=True,
             )
 
-            if go:
+            if go_search:
                 st.session_state.page = "search"
                 st.session_state["kw"] = picked_region
                 st.session_state.region_meta = (picked_region, None, None, None)
