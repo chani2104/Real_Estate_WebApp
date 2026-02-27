@@ -2,6 +2,7 @@
 import re
 from urllib.parse import quote, urlparse, parse_qs
 
+import math
 import requests
 import team_explore
 import pandas as pd
@@ -583,8 +584,21 @@ def topbar(title="부동산 매물 검색", subtitle=None):
 def sidebar_controls():
     with st.sidebar:
         st.markdown("### 🔎 검색")
-        default_kw = st.session_state.region_meta[0] if st.session_state.region_meta else ""
-        keyword = st.text_input("지역", value=default_kw, placeholder="예) 잠실동 / 판교 / 서울 종로구", key="kw")
+
+        default_kw = (
+            st.session_state.region_meta[0] if st.session_state.region_meta else ""
+        )
+
+        # ✅ kw가 비어있을 때만 기본값 채우기 (다른 페이지에서 미리 넣은 값 유지)
+        if "kw" not in st.session_state or not str(st.session_state["kw"]).strip():
+            st.session_state["kw"] = default_kw
+
+        keyword = st.text_input(
+            "지역",
+            key="kw",
+            placeholder="예) 잠실동 / 판교 / 서울 종로구",
+        )
+
         limit = st.slider("가져올 개수", 10, 50, 50, 10, key="limit")
 
         st.markdown("---")
@@ -705,9 +719,11 @@ def render_lobby():
               <div class="lobby-desc">
                 원하는 지역의 좌표와 중심 위치를 확인하고<br>
                 지도 기반으로 주변 환경을 먼저 탐색합니다.<br><br>
-                ✓ 지역 좌표 자동 탐색<br>
+                ✓ 전국 맞춤형 이사 지역 가이드<br>
                 ✓ 지도 미리보기<br>
-                ✓ 이후 매물 검색으로 바로 연결
+                ✓ 개인별 인프라 가중치 설정<br>
+                ✓ 분야별 인프라 순위 그래프<br>
+                ✓ 상세 데이터 테이블
               </div>
             </div>
             """,
@@ -731,8 +747,10 @@ def render_lobby():
               <div class="lobby-desc">
                 지역 · 가격 · 면적 · 지하철 조건을 설정하고<br>
                 실제 매물을 지도와 함께 확인합니다.<br><br>
-                ✓ 네이버부동산 스타일 목록 UI<br>
+                ✓ 개인별 필터링에 따른 매물 검색<br>
                 ✓ 지도 + 상세정보 실시간 연동<br>
+                ✓ 근처 학교 유무 표시<br>
+                ✓ 매물 사진 미리보기<br>
                 ✓ 가격 구간 분석 시각화 제공
               </div>
             </div>
@@ -766,7 +784,7 @@ def render_explore():
 
 
 def render_search():
-    topbar("부동산 매물 검색")
+    topbar("부동산 매물 검색", "희망 지역내 매물 검색")
 
     # back
     if st.button(" ← 메인으로"):

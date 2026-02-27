@@ -265,7 +265,7 @@ def render_team_explore():
                     st.rerun()
 
     with col1:
-        st.subheader("📍 지역별 만족도 지도")
+        st.subheader("📍 지역별 만족도 지도", "마커를 클릭하여 매물 검색")
         m = folium.Map(
             location=st.session_state.team_map_center,
             zoom_start=st.session_state.team_map_zoom,
@@ -273,9 +273,7 @@ def render_team_explore():
 
         for _, row in view_df.iterrows():
             is_highlight = row["sggCd_key"] in highlight_codes
-            popup_html = (
-                f"<b>{row['full_region']}</b><br>테마 점수: {row['custom_score']:.1f}"
-            )
+            popup_html = f"<b>{row['full_region']}</b><br>테마 점수: {row['custom_score']:.1f}"
 
             folium.CircleMarker(
                 location=[row["위도"], row["경도"]],
@@ -287,7 +285,88 @@ def render_team_explore():
                 weight=2 if is_highlight else 1,
             ).add_to(m)
 
-        st_folium(m, width="100%", height=500, key="team_main_map")
+        # ✅ 클릭 정보 받기
+        out = st_folium(m, width="100%", height=500, key="team_main_map")
+
+        # ✅ 마커(원) 클릭 감지: 클릭 좌표 기준으로 가장 가까운 지역 찾기
+        if out and out.get("last_object_clicked"):
+            lat = out["last_object_clicked"]["lat"]
+            lon = out["last_object_clicked"]["lng"]
+
+            # 가장 가까운 행 찾기 (유클리드 근사, 충분히 잘 맞음)
+            tmp = view_df.copy()
+            tmp["__d"] = (tmp["위도"] - lat) ** 2 + (tmp["경도"] - lon) ** 2
+            picked = tmp.sort_values("__d").iloc[0]
+
+            st.session_state["team_picked_region"] = str(picked["full_region"])
+
+        # ✅ 선택된 지역이 있으면 “매물 검색” 버튼 노출
+        picked_region = st.session_state.get("team_picked_region")
+
+        if picked_region:
+            st.markdown(
+                f"""
+                <div style="
+                    background:#FFFFFF;
+                    border:1px solid #E6E8EF;
+                    border-radius:16px;
+                    padding:14px 14px;
+                    box-shadow:0 10px 24px rgba(16,24,40,0.08);
+                    margin-top:10px;
+                ">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                    <div style="min-width:0;">
+                    <div style="color:#6B7280; font-size:0.92rem; font-weight:800; margin-bottom:6px;">
+                        📍 현재 선택한 지역
+                    </div>
+                    <div style="
+                        font-size:1.25rem;
+                        font-weight:900;
+                        color:#111827;
+                        line-height:1.25;
+                        white-space:nowrap;
+                        overflow:hidden;
+                        text-overflow:ellipsis;
+                    ">
+                        {picked_region}
+                    </div>
+                    </div>
+                    <div style="
+                        background:rgba(3,199,90,0.12);
+                        color:#03C75A;
+                        font-weight:900;
+                        font-size:0.9rem;
+                        padding:6px 10px;
+                        border-radius:999px;
+                        flex:0 0 auto;
+                    ">
+                    선택됨
+                    </div>
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # 버튼은 아래에서 "넓고 크게"
+            go = st.button(
+                "🔎 이 지역 매물 검색하기",
+                key="go_search_from_map",
+                type="primary",
+                use_container_width=True,
+            )
+
+            if go:
+                st.session_state.page = "search"
+                st.session_state["kw"] = picked_region
+                st.session_state.region_meta = (picked_region, None, None, None)
+                st.session_state.df = None
+                st.session_state.selected_id = None
+                st.rerun()
+        else:
+            st.info(
+                "지도에서 원(마커)을 클릭하면 선택 지역이 표시되고, 바로 매물 검색으로 이동할 수 있어요."
+            )
 
     # (이하 인프라 심층 분석 파트도 그대로 이어붙이면 됨)
     st.divider()
